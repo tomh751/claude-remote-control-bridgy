@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#1a1614" />
+  <!-- Disable iOS data-detection (see index.html for rationale). -->
+  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no,url=no" />
+  <!-- Inline base styles BEFORE any external stylesheet loads. Same
+       fix as index.html — without inlining font-family here, iOS Safari
+       can commit to a serif fallback during the brief load window
+       before app.css applies, and never repaints when the font-family
+       arrives. Locks Geist (with safe sans-serif fallbacks) from the
+       first paint. -->
+  <style>
+    :root { color-scheme: dark; }
+    :root[data-theme="light"] { color-scheme: light; }
+    html, body {
+      background: #1a1614;
+      margin: 0;
+      color: #e9e6e1;
+      font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    html[data-theme="light"], html[data-theme="light"] body {
+      background: #faf6f1;
+      color: #2a2118;
+    }
+  </style>
+  <!-- Read theme preference from localStorage and apply before paint
+       so light-mode users don't flash dark before settling. -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('crc.theme');
+        if (t === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <!-- Auto-redirect HTTP → HTTPS. `defer` on both so the inline dark-bg
+       <style> above can paint immediately — without defer, the browser
+       holds first paint until /runtime-config.js fetches, which over a
+       cold Tailscale tunnel can stall for 200–1500ms. defer preserves
+       execution order and still fires before DOMContentLoaded. -->
+  <script src="/runtime-config.js" defer></script>
+  <script defer>
+    (function () {
+      var cfg = window.CRC_CONFIG || {};
+      if (cfg.httpsUrl &&
+          location.protocol === 'http:' &&
+          location.hostname !== 'localhost' &&
+          location.hostname !== '127.0.0.1') {
+        location.replace(cfg.httpsUrl + location.pathname + location.search);
+      }
+    })();
+  </script>
+  <!-- See index.html note: iOS Safari ignores SVG apple-touch-icons. -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png?v=__ASSET_VERSION__" />
+  <link rel="apple-touch-icon" sizes="167x167" href="/icons/apple-touch-icon-167.png?v=__ASSET_VERSION__" />
+  <link rel="apple-touch-icon" sizes="152x152" href="/icons/apple-touch-icon-152.png?v=__ASSET_VERSION__" />
+  <link rel="icon" href="/icons/app-icon.svg?v=__ASSET_VERSION__" type="image/svg+xml" />
+  <!-- Self-hosted Geist (was Google Fonts). Preload the latin slice so
+       the byte fetch starts BEFORE @font-face is parsed — iOS Safari is
+       finicky about lazy webfont fetches and the preload pattern is the
+       most reliable way to get the font on screen for first paint. -->
+  <link rel="preload" href="/static/fonts/gyByhwUxId8gMEwcGFWNOITd.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/static/fonts/_face.css?v=__ASSET_VERSION__" />
+  <link rel="stylesheet" href="/static/app.css?v=__ASSET_VERSION__" />
+  <script src="/static/ptr.js?v=__ASSET_VERSION__"></script>
+  <title>Bridgy — Sign in</title>
+</head>
+<body class="login">
+  <div class="login__card">
+    <div class="login__logo" aria-hidden="true">
+      <img src="/icons/bridgy_loading.gif?v=__ASSET_VERSION__" alt="" width="180" height="180" style="image-rendering:pixelated;shape-rendering:crispEdges" />
+    </div>
+    <h1 class="login__title">Bridgy</h1>
+    <p class="login__hint">Enter your password from <code>.env.local</code>.</p>
+    <form id="loginForm" class="login__form">
+      <!-- A hidden username so Safari/iOS Keychain offers to save the
+           password under a recognizable account name. -->
+      <input type="text" name="username" value="bridgy" autocomplete="username" hidden />
+      <div class="login__pwWrap">
+        <input
+          type="password"
+          id="passwordInput"
+          name="password"
+          class="login__input"
+          autocomplete="current-password"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="password"
+          required />
+        <button type="button" id="pwToggle" class="login__pwToggle" aria-label="Show password" aria-pressed="false">
+          <!-- Eye icon (closed by default — password is hidden) -->
+          <svg id="pwToggleIcon" width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M3 12s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/>
+            <path id="pwToggleSlash" d="M4 4l16 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <button type="submit" class="login__submit">Sign in</button>
+      <button type="button" id="faceIdBtn" class="login__faceid" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9v1M15 9v1M9 14s1 1.5 3 1.5S15 14 15 14"/></svg>
+        Sign in with Face ID
+      </button>
+      <div class="login__err" id="loginErr" hidden></div>
+    </form>
+  </div>
+  <script>
+    // Password reveal toggle. Tap the eye to flip type="password" ↔ "text".
+    // The diagonal slash inside the icon shows/hides to indicate state.
+    const pwInput = document.getElementById('passwordInput');
+    const pwToggle = document.getElementById('pwToggle');
+    const pwSlash = document.getElementById('pwToggleSlash');
+    pwToggle.addEventListener('click', () => {
+      const showing = pwInput.type === 'text';
+      pwInput.type = showing ? 'password' : 'text';
+      pwToggle.setAttribute('aria-pressed', String(!showing));
+      pwToggle.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      pwSlash.style.display = showing ? '' : 'none';
+    });
+
+    const form = document.getElementById('loginForm');
+    const err = document.getElementById('loginErr');
+    function showErr(text) { err.textContent = text; err.hidden = false; }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      const pw = document.getElementById('passwordInput').value;
+      const body = new FormData();
+      body.append('password', pw);
+      try {
+        const resp = await fetch('/login', { method: 'POST', body });
+        const data = await resp.json();
+        if (!resp.ok) { showErr(data.error || 'Invalid password.'); return; }
+        location.href = '/';
+      } catch (e2) {
+        showErr('Network error.');
+      }
+    });
+
+    // ── Face ID / passkey sign-in ────────────────────────────────────
+    // base64url ↔ ArrayBuffer helpers — WebAuthn passes binary in / out as
+    // BufferSource, but our wire format is base64url JSON. Convert on the
+    // edges so the server sees consistent strings.
+    function b64urlToBuf(s) {
+      s = s.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = s.length % 4 ? '='.repeat(4 - s.length % 4) : '';
+      const bin = atob(s + pad);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      return buf.buffer;
+    }
+    function bufToB64url(buf) {
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    const faceBtn = document.getElementById('faceIdBtn');
+    const faceCsrf = { 'X-CRC-Request': '1', 'Content-Type': 'application/json' };
+
+    async function tryShowFaceId() {
+      if (!window.PublicKeyCredential) return;
+      try {
+        const r = await fetch('/api/passkey/status');
+        const data = await r.json();
+        if (data.available && data.has_credentials) faceBtn.hidden = false;
+      } catch {}
+    }
+    tryShowFaceId();
+
+    faceBtn.addEventListener('click', async () => {
+      err.hidden = true;
+      try {
+        const r = await fetch('/api/passkey/auth/start', { method: 'POST', headers: faceCsrf });
+        if (!r.ok) { showErr('No passkey registered yet.'); return; }
+        const opts = await r.json();
+        // Convert base64url fields → BufferSource for the browser API.
+        const publicKey = {
+          challenge: b64urlToBuf(opts.challenge),
+          rpId: opts.rpId,
+          timeout: opts.timeout,
+          userVerification: opts.userVerification,
+          allowCredentials: (opts.allowCredentials || []).map((c) => ({
+            id: b64urlToBuf(c.id), type: c.type,
+          })),
+        };
+        const cred = await navigator.credentials.get({ publicKey });
+        if (!cred) throw new Error('No credential returned');
+        const credential = {
+          id: cred.id,
+          rawId: bufToB64url(cred.rawId),
+          type: cred.type,
+          response: {
+            authenticatorData: bufToB64url(cred.response.authenticatorData),
+            clientDataJSON: bufToB64url(cred.response.clientDataJSON),
+            signature: bufToB64url(cred.response.signature),
+            userHandle: cred.response.userHandle ? bufToB64url(cred.response.userHandle) : null,
+          },
+          clientExtensionResults: cred.getClientExtensionResults(),
+        };
+        const finish = await fetch('/api/passkey/auth/finish', {
+          method: 'POST', headers: faceCsrf,
+          body: JSON.stringify({ credential }),
+        });
+        if (!finish.ok) {
+          const d = await finish.json().catch(() => ({}));
+          showErr(d.detail || 'Face ID failed.');
+          return;
+        }
+        location.href = '/';
+      } catch (e2) {
+        // User cancelled the system Face ID prompt — leave the err hidden,
+        // the password input is still there for them to use.
+        if (e2 && e2.name !== 'NotAllowedError') {
+          showErr('Face ID error: ' + (e2.message || e2.name));
+        }
+      }
+    });
+  </script>
+</body>
+</html>

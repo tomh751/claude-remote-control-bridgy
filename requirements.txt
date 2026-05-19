@@ -1,0 +1,31 @@
+python-dotenv==1.0.1
+watchfiles==0.24.0
+httpx==0.28.1
+# Web UI (FastAPI + WebSocket + multipart uploads).
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.17
+# Face ID / passkey support on the web UI. Pure-Python WebAuthn ceremony
+# validator; no external service. Credentials persist to <projects_root>/
+# .crc-passkeys.json (gitignored, single-user).
+webauthn==2.5.0
+# Web Push: send "Claude finished" notifications to subscribed phones
+# even when the PWA is closed. Uses VAPID auth (keys auto-generated on
+# first run and stored in <projects_root>/.crc-push.json). No third-party
+# push service — the bridge POSTs directly to whatever push endpoint the
+# browser handed us at subscribe time.
+pywebpush==2.3.0
+# Local Whisper for the mic button. Audio bytes from MediaRecorder are
+# decoded + transcribed entirely in memory (PyAV → ctranslate2) so the
+# user's voice never touches disk. Model auto-downloads to
+# ~/.cache/huggingface on first use. See bridge/web/transcribe.py for
+# the env-var knobs (WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE).
+faster-whisper>=1.1.0
+# Image shrink on upload. Anthropic's vision API rejects messages
+# containing any image whose longest edge exceeds 2000 px (the limit
+# triggers a "Start a new session with fewer images" error and wedges
+# the conversation). We pre-shrink to a 1568 px max-edge (Anthropic's
+# recommended cost-optimal size) using Pillow's LANCZOS resampling
+# before the file ever lands on disk. See _maybe_shrink_image() in
+# bridge/web/server.py.
+Pillow>=10.3.0

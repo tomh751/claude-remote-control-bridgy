@@ -1,0 +1,195 @@
+# =========================================================================
+# Secrets — never commit
+# =========================================================================
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.crt
+*.cer
+# Passkey credential store (lives in <PROJECTS_ROOT>/.crc-passkeys.json by
+# default, but defended here in case a user reconfigures the path into the
+# repo). Contains FIDO2 public-key credentials — not secret on its own but
+# personally identifying.
+.crc-passkeys.json
+# Web Push subscription + VAPID keypair store. The VAPID PRIVATE KEY in
+# this file lets anyone send push notifications to subscribed phones —
+# never commit it.
+.crc-push.json
+# Shared secret for the /api/trigger/{token} endpoint. Anyone with this
+# token can POST a prompt to the bridge for Claude to run; keep it local.
+.crc-trigger-token
+# =========================================================================
+# Log files at the project root — HARD RULE (user request, twice)
+# =========================================================================
+# Bridge / server / restart logs must NEVER live at the repo root. They
+# always go into `.cache/` (which is `.cache/` -gitignored below). These
+# rules are belt-and-suspenders so any stray redirect a launcher might
+# accidentally do never ends up in `git status`. If you see a NEW
+# pattern of stray log appear, ADD it here — never relax the rule.
+#
+# Pattern coverage:
+#   .bridge.log / .bridge.*.log / bridge.log / bridge.log.err  — Python stdout/stderr
+#   .server.log / .server.err / .server.out / .server.*.log    — ad-hoc Start-Process redirects
+#   *.out / *.err at the repo root                             — anything else that slips through
+bridge.log
+bridge.log.err
+bridge.out.log
+bridge.err.log
+/.bridge.log
+/.bridge.log.err
+/.bridge.err.log
+/.bridge.out.log
+/.bridge.*.log
+.server.log
+.server.err
+.server.out
+.server.err.log
+.server.out.log
+.server.*.log
+/*.out
+/*.err
+# Rotated/backed-up bridge logs from the (optional) Start-Process
+# log-rotation pattern. Same sensitive-data concerns as the live logs.
+*.log.bak
+*.log.err.bak
+# Generated splash artwork — keep the source PNG (octopus.png) tracked so
+# new clones can rebuild, but the derived per-device PNGs are large and
+# regenerate from a single `python tools/build_splashes.py` run.
+# (Comment out the next two lines if you want to ship pre-built splashes.)
+# bridge/web/static/splash/splash-*.png
+
+# UI icon build intermediates — the *.raw.png files are the Nano Banana
+# output (solid-white-bg PNG). They get processed by the build scripts
+# into the tracked transparent-bg .png files alongside them. The raws
+# are build inputs only; never served to the client. Cover every icon
+# subfolder with a recursive glob so future tools (models, status, etc.)
+# don't accidentally check in their raws.
+bridge/web/static/icons/**/*.raw.png
+
+# =========================================================================
+# Python
+# =========================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# =========================================================================
+# Node (for the future channel server + any client-side tooling)
+# =========================================================================
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# =========================================================================
+# Bridge runtime state — regenerated on every run
+# =========================================================================
+*.log
+logs/
+bridge_state.json
+.last_session_id
+.cache/
+.web-uploads/
+
+# Empty per-project watch folders (live INSIDE each project under
+# PROJECTS_ROOT — not at the bridge root, but if a user's workflow
+# accidentally creates them here, don't track).
+/assets/
+/output/
+/screenshots/
+
+# Root-level PNGs are test/debug screenshots dropped by Playwright runs
+# and ad-hoc visual probes. Use `/` prefix so this only matches files at
+# the repo root — tracked icon PNGs under `bridge/web/static/icons/` and
+# `bridge/web/static/splash/` are unaffected. Added 2026-05-17 after a
+# security audit caught 13 untracked PNGs that `git add -A` would have
+# committed to the public repo.
+/*.png
+# Same pattern for dotfile logs that the orchestrator's hidden-window
+# pythonw launcher drops at the repo root when stdout is captured.
+/.bridge.log
+/.bridge.err.log
+# Tempfile we use as a write-stage for memory files (the .claude/** write
+# rail blocks Edit/Write inside that path).
+/tmp-*.md
+/tmp-*.txt
+
+# Stray Windows redirect artifact ("> nul" in PowerShell creates a file
+# named `nul`)
+nul
+
+# Asset-version state file. The bridge auto-bumps this on every static
+# file mtime change — tracking it would mean every JS / CSS edit shows
+# up as an extra dirty file in `git status` and produces a noise-only
+# diff in every PR. The bridge creates a fresh file on first request
+# if it's missing.
+bridge/web/.asset-version
+
+# =========================================================================
+# Editor / OS
+# =========================================================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================================================================
+# Developer-only artifacts — NOT shipped to public GitHub
+# =========================================================================
+# These directories support the bridge maintainer's own workflow on this
+# codebase (Claude Code config, design skills, asset-build scripts) but
+# are not needed by end users who just want to install + run the bridge.
+# A fresh clone of the public repo will not have them; the bridge runtime
+# does not depend on any of them — all build outputs (icons, splash PNGs,
+# inlined splash markup) are pre-committed under bridge/web/static/.
+#
+# Each directory still exists on the maintainer's local disk after this
+# gitignore takes effect — it's only `git push` / `git status` that
+# treats them as invisible.
+.claude/
+skills/
+tools/
+CLAUDE.md
+
+# Anything starting with `.local-` is "this developer's machine only"
+# (transcripts, exports, debugging dumps you want to keep around but not
+# share). Optional convention, but the gitignore reserves it.
+.local-*/
+
+# Claude Code project-scoped MCP server list. Dev-only convenience
+# (e.g. Playwright MCP for live PWA debugging) — never required to run
+# or use the bridge. Each developer adds their own preferred MCPs via
+# `claude mcp add --scope project …`.
+.mcp.json
+
+# Playwright MCP working directory — created automatically when the
+# Playwright MCP is active in the current Claude Code session. Holds
+# per-call screenshot scratch and page snapshot YAML dumps. Regenerated
+# every run; never needed in git.
+.playwright-mcp/
+
+# Detached bridge-restart logs. The PowerShell launcher pipes the
+# hidden-window process stdout/stderr into these when restarting the
+# bridge; same sensitive-data concerns as bridge.log.* above.
+.restart.log
+.restart.log.err
+
+# Dev-only output folders. Both regenerate from running the relevant
+# tool / launcher and contain noise the public repo doesn't need.
+#   logs/             — bridge.log / bridge.log.err / .restart.log* land here when
+#                       the bridge is spawned detached via the orchestrator's
+#                       hidden-window restart pattern. May contain request
+#                       paths, tracebacks referencing local file paths.
+#   dev-screenshots/  — every pwa_driver / pwa_visual_probe screenshot run
+#                       drops a timestamped subdir here. Grows on the dev's
+#                       disk over time; never needed in git. Manual cleanup
+#                       with `rm -rf dev-screenshots/` between sessions is fine.
+logs/
+dev-screenshots/

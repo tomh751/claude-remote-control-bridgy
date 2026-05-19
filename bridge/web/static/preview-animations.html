@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kawaii thinking-indicator preview</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    background: #1a1614;
+    color: #e9e6e1;
+    font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif;
+    margin: 0;
+    padding: 24px 16px 64px;
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px;
+  }
+  p.intro {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #c7bfb6;
+    margin: 0 0 28px;
+    max-width: 560px;
+  }
+  section.opt {
+    border: 1px solid #2d2725;
+    border-radius: 14px;
+    padding: 18px 16px 22px;
+    margin: 0 0 22px;
+    background: #221d1b;
+  }
+  section.opt h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 14px;
+    color: #fff;
+  }
+  section.opt .desc {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #c7bfb6;
+    margin: 0 0 16px;
+  }
+  .row { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; margin: 0 0 6px; }
+  .label { font-size: 11px; color: #8a807a; min-width: 84px; }
+  .preview { display: inline-flex; align-items: center; }
+
+  /* Crisp pixel-art rendering on every img / sprite. */
+  img, .sprite {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+
+  /* ─── Option A — spinning kawaii blob ─────────────────────────────── */
+  .opt-a-big {
+    width: 128px; height: 128px;
+    animation: spinA 1.6s linear infinite;
+  }
+  .opt-a-small {
+    width: 24px; height: 24px;
+    animation: spinA 1.6s linear infinite;
+  }
+  @keyframes spinA { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+  /* ─── Option B — multi-frame sprite cycle ─────────────────────────── */
+  .sprite {
+    display: inline-block;
+    background-image: url(/icons/kawaii_sprite.png);
+    background-repeat: no-repeat;
+    background-size: auto 100%;
+  }
+  .opt-b-big {
+    width: 128px; height: 128px;
+    animation: cycleBBig 1.2s steps(6) infinite;
+  }
+  .opt-b-small {
+    width: 24px; height: 24px;
+    animation: cycleBSmall 1.2s steps(6) infinite;
+  }
+  @keyframes cycleBBig {
+    from { background-position-x: 0; }
+    to   { background-position-x: -768px; }   /* 6 * 128 */
+  }
+  @keyframes cycleBSmall {
+    from { background-position-x: 0; }
+    to   { background-position-x: -144px; }   /* 6 * 24 */
+  }
+
+  /* ─── Option C — bouncing kawaii blob (already live in chat) ──────── */
+  .opt-c-big, .opt-c-small {
+    transform-origin: 50% 100%;
+    animation: bounceC 1.2s ease-in-out infinite;
+  }
+  .opt-c-big { width: 128px; height: 128px; }
+  .opt-c-small { width: 24px; height: 24px; }
+  @keyframes bounceC {
+    0%   { transform: translateY(0)   scaleY(1.00); }
+    25%  { transform: translateY(-12px) scaleY(1.04); }
+    50%  { transform: translateY(-18px) scaleY(1.06); }
+    80%  { transform: translateY(0)   scaleY(0.94); }
+    100% { transform: translateY(0)   scaleY(1.00); }
+  }
+
+  /* Mini "thinking row" mock so the user sees how each option reads
+     embedded next to text. */
+  .mock {
+    background: #1a1614;
+    border: 1px dashed #3a322f;
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: #c7bfb6;
+    font-style: italic;
+  }
+  .mock .spin {
+    color: #0E6E6E;
+    text-shadow: 0 0 8px rgba(14, 110, 110, 0.45);
+  }
+  .mock .dots { opacity: 0.6; }
+
+  footer {
+    margin-top: 28px;
+    font-size: 11px;
+    color: #6a605b;
+  }
+</style>
+</head>
+<body>
+<h1>Kawaii thinking-indicator — 3 options</h1>
+<p class="intro">
+  Pick what plays next to the cycling word ("Bridging…", "Marinating…", etc.)
+  while a Claude run is in flight. Each section shows the option at preview
+  size (128px) on the left, the small size (24px) it would actually render
+  at in the chat in the middle, and a mock thinking-row on the right so you
+  can see it next to the text. Reload this page to re-time the loops.
+</p>
+
+<section class="opt">
+  <h2>Option A — single blob rotating like a propeller</h2>
+  <div class="desc">
+    The existing kawaii blob image spinning continuously via CSS rotate.
+    Cheapest of the three. No new images needed beyond what's already
+    shipped. Reads as "machine going" — playful but doesn't strictly
+    say "character thinking."
+  </div>
+  <div class="row">
+    <span class="label">128px</span>
+    <span class="preview">
+      <img class="opt-a-big" src="/icons/kawaii_blob.png" alt="">
+    </span>
+  </div>
+  <div class="row">
+    <span class="label">24px (chat size)</span>
+    <span class="preview">
+      <img class="opt-a-small" src="/icons/kawaii_blob.png" alt="">
+    </span>
+  </div>
+  <div class="row">
+    <span class="label">In context</span>
+    <span class="mock">
+      <img class="opt-a-small" src="/icons/kawaii_blob.png" alt="">
+      <span class="spin">◐</span>
+      <span>Bridging</span>
+      <span class="dots">…</span>
+    </span>
+  </div>
+</section>
+
+<section class="opt">
+  <h2>Option B — sprite-sheet cycle (6 expression frames)</h2>
+  <div class="desc">
+    Six generated frames (default · blink · look-left · look-right · cheer ·
+    concentrating-with-question-mark) cycled with CSS <code>steps(6)</code>
+    timing. The character actually pulls faces while it works. Most
+    distinctive of the three.
+  </div>
+  <div class="row">
+    <span class="label">128px</span>
+    <span class="preview">
+      <span class="sprite opt-b-big"></span>
+    </span>
+  </div>
+  <div class="row">
+    <span class="label">24px (chat size)</span>
+    <span class="preview">
+      <span class="sprite opt-b-small"></span>
+    </span>
+  </div>
+  <div class="row">
+    <span class="label">In context</span>
+    <span class="mock">
+      <span class="sprite opt-b-small"></span>
+      <span class="spin">◐</span>
+      <span>Bridging</span>
+      <span class="dots">…</span>
+    </span>
+  </div>
+</section>
+
+<section class="opt">
+  <h2>Option C — bouncing blob (live in chat as of 1.0.82)</h2>
+  <div class="desc">
+    Same character + same animation as the empty-state mascot, scaled to
+    18px. Already wired into the chat's thinking row in the running
+    build — this section is here for side-by-side comparison.
+  </div>
+  <div class="row">
+    <span class="label">128px</span>
+    <span class="preview">
+      <img class="opt-c-big" src="/icons/kawaii_blob.png" alt="">
+    </span>
+  </div>
+  <div class="row">
+    <span class="label">24px (chat size)</span>
+    <span class="preview">
+      <img class="opt-c-small" src="/icons/kawaii_blob.png" alt="">
+    </span>
+  </div>
+  <div class="row">
+    <span class="label">In context</span>
+    <span class="mock">
+      <img class="opt-c-small" src="/icons/kawaii_blob.png" alt="">
+      <span class="spin">◐</span>
+      <span>Bridging</span>
+      <span class="dots">…</span>
+    </span>
+  </div>
+</section>
+
+<footer>
+  Sprite sheet at <code>/icons/kawaii_sprite.png</code> · blob at
+  <code>/icons/kawaii_blob.png</code> · this preview page is at
+  <code>/static/preview-animations.html</code> and is served without auth
+  (no API surface here, just images and CSS).
+</footer>
+</body>
+</html>

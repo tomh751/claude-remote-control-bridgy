@@ -1,0 +1,4379 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Claude — mobile PWA styles.
+
+   Design tokens are warm-dark to match the VS Code Claude Code extension.
+   Brand accent is Claude's coral (#0E6E6E) — used sparingly, only on
+   primary actions and active states. Body font is Geist (not Inter, per
+   the anti-slop rule in the project's design kit).
+   ───────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Tell the browser what color scheme this page handles. Without this,
+     iOS Safari applies its own dark-mode UA stylesheet on top of ours
+     when the OS is in dark mode — sneaking in different form-control
+     fonts, sharper corners on some elements, alternate scrollbar tints,
+     etc. — even with `-webkit-appearance: none`. Declaring color-scheme
+     explicitly here (and flipping it under [data-theme="light"] below)
+     forces iOS to render UA chrome consistent with OUR theme, regardless
+     of the user's OS dark-mode setting. */
+  color-scheme: dark;
+  /* surfaces */
+  --bg: #1a1614;
+  --bg-2: #211c19;
+  --bg-3: #2a2421;
+  --bg-4: #332c28;
+  /* text */
+  --fg: #ece1d2;
+  --fg-2: #b9aa97;
+  --fg-3: #7a6f60;
+  /* accent */
+  --accent: #0E6E6E;
+  --accent-2: #095555;
+  --accent-soft: rgba(14, 110, 110, 0.14);
+  --accent-ring: rgba(14, 110, 110, 0.36);
+  /* states */
+  --ok: #7fa37a;
+  --warn: #d4a85a;
+  --danger: #c97264;
+  /* borders + shadows — bumped after first-look UX: warm-dark backgrounds eat
+     low-alpha borders, dividers visually disappeared in ambient light. */
+  --line: rgba(255, 247, 235, 0.10);
+  --line-strong: rgba(255, 247, 235, 0.18);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.02);
+  --shadow-md: 0 8px 24px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.03);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.04);
+  /* THEME-INVARIANT TOKENS — these MUST live in the default :root, NOT
+     inside :root[data-theme="light"], or dark mode (which has no data-
+     theme attribute) leaves them undefined. An undefined CSS variable
+     silently invalidates the entire property it's used in, so e.g.
+     `font-family: var(--font-body)` becomes `font-family: ;` which
+     drops to the UA default font. THIS was the root cause of the
+     "dark theme renders in serif with sharp button edges" regression:
+     these tokens were accidentally scoped to the light-theme block. */
+  /* layout */
+  --radius-pill: 999px;
+  --radius-card: 18px;
+  --radius-tile: 12px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --topbar-h: 52px;
+  /* typography. Hebrew-supporting fallbacks ('Arial Hebrew', 'Heebo')
+     appear before the generic sans/monospace so non-Latin characters
+     in the chat (e.g. Hebrew bank descriptions) render real glyphs
+     rather than the OS last-resort tofu (□). The @font-face shims in
+     fonts/_face.css cover the Hebrew unicode range against Geist
+     directly; this stack catches anything that slips through. */
+  --font-body: 'Geist', system-ui, -apple-system, 'Segoe UI', 'Arial Hebrew', 'Heebo', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, 'Courier New', 'Arial Hebrew', monospace;
+  /* motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Light theme — warm cream surfaces, dark text, same coral accent so the
+   brand carries through. Activated by `data-theme="light"` on <html>,
+   set by app.js on boot from localStorage and toggled via the ⋯ menu.
+   The accent stays the dark-theme coral; the soft + ring tints are tuned
+   for legibility on light bg (lighter, less transparent).
+   NOTE: only COLOR/SHADOW tokens belong here. Theme-invariant tokens
+   (font, radius, motion, safe-area) live in the default :root above. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf6f1;
+  --bg-2: #f1ebe1;
+  --bg-3: #e6decf;
+  --bg-4: #d9cfbd;
+  --fg: #2a2118;
+  --fg-2: #54483b;
+  --fg-3: #8a7a68;
+  --accent: #0a5e5e;            /* slightly darker teal on light bg to retain contrast */
+  --accent-2: #074545;
+  --accent-soft: rgba(14, 110, 110, 0.14);
+  --accent-ring: rgba(10, 94, 94, 0.32);
+  --ok: #4a8a4f;
+  --warn: #b88820;
+  --danger: #b54a3a;
+  --line: rgba(60, 40, 25, 0.10);
+  --line-strong: rgba(60, 40, 25, 0.20);
+  --shadow-sm: 0 1px 2px rgba(60,40,25,.10), inset 0 1px 0 rgba(255,255,255,.5);
+  --shadow-md: 0 6px 18px rgba(60,40,25,.10), inset 0 1px 0 rgba(255,255,255,.6);
+  --shadow-lg: 0 18px 40px rgba(60,40,25,.15), inset 0 1px 0 rgba(255,255,255,.7);
+}
+
+* { box-sizing: border-box; }
+
+/* CRITICAL: the HTML `hidden` attribute must beat `display: flex` declared
+   on .sheet / .lightbox below. Without this rule, every sheet AND the
+   lightbox render on top of each other on page load — the close handlers
+   correctly set hidden=true but display:flex keeps them visible, so the
+   page looks permanently stuck with a half-dark overlay. !important
+   required because the .sheet / .lightbox selectors are more specific. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;            /* unprefixed for Android Chrome */
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'ss01', 'cv01';
+}
+
+/* iOS: stop the input field from zooming the page on focus by keeping font
+   size at 16px on inputs/textareas. */
+input, textarea, select, button { font: inherit; color: inherit; }
+input, textarea { font-size: 16px; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+}
+body {
+  /* Pin body to the viewport edges so it physically cannot exceed the
+     visible region. On iOS standalone PWAs, `height: 100dvh` was
+     sometimes computing taller than the visible screen, leaving a fat
+     dark band at the bottom below the composer. Anchoring with
+     `position: fixed; inset: 0` removes that ambiguity — body fills
+     exactly the layout viewport, and the safe-area inset for the home
+     indicator is handled INSIDE the composer's bottom padding. */
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  /* `minmax(0, 1fr)` lets the column shrink below its content width,
+     so the tabs strip and code blocks can overflow internally instead
+     of forcing the entire body wider than the viewport. */
+  grid-template-columns: minmax(0, 1fr);
+}
+
+button, input, textarea, select {
+  /* CRITICAL on iOS Safari: without `-webkit-appearance: none` the
+     native form controls take over — buttons get a system grey bg with
+     sharp-ish corners, inputs get a beveled border, etc. — and our
+     custom border-radius / background / colors are SILENTLY IGNORED.
+     This was the cause of "the send button has sharp edges in dark
+     mode": iOS dark-mode native button styling overrode our pill
+     radius. Explicit appearance:none on all form-control element types
+     forces iOS to honor our custom CSS in every theme. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+button {
+  background: none; border: none; padding: 0; margin: 0;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+button:active { transform: scale(0.96); transition: transform 80ms var(--ease-spring); }
+
+a { color: var(--accent); text-decoration: none; }
+
+/* ─── Top bar ───────────────────────────────────────────────────────── */
+
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  /* `max(var(--safe-top), 8px)`: in PWA standalone mode env(safe-area-inset-top)
+     returns the notch height (~47-59pt) and pushes our content below the
+     iOS status bar. In Safari browser mode env() can return 0 (Safari draws
+     its own URL bar elsewhere), leaving our hamburger / topbar buttons
+     sitting flush under the system status bar, where iOS intercepts taps
+     for control-center/notification-center gestures. The 8px floor keeps
+     tap targets comfortably below the status bar in Safari too. */
+  padding-top: max(var(--safe-top), 8px);
+  /* Distinct from chat bg so the divider is obvious even when chat is empty. */
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line-strong);
+  box-shadow: 0 1px 0 rgba(0,0,0,.3);
+}
+.topbar, .topbar > * { box-sizing: border-box; }
+.topbar {
+  display: grid;
+  /* `minmax(0, 1fr)` on the center column — not plain `1fr` — so when
+     the project name is long it SHRINKS (ellipsis kicks in) before the
+     icons on the right get pushed off-screen. With plain 1fr the column
+     refuses to go below its content's intrinsic min-width, which on a
+     long title meant the auto column (icons) overflowed past the
+     viewport's right edge and the ⋯ got clipped. */
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  height: calc(var(--topbar-h) + max(var(--safe-top), 8px));
+  /* Honor safe-area-inset-left/right too (iOS rounded-corner devices in
+     landscape, some Android display cutouts). On portrait iPhones these
+     are normally 0; the `max(..., 8px)` floor keeps icons comfortably
+     inset from the screen edge. */
+  padding-left: max(env(safe-area-inset-left, 0px), 8px);
+  padding-right: max(env(safe-area-inset-right, 0px), 8px);
+  gap: 4px;
+  /* Hard-cap horizontal so no descendant can drag the bar past the
+     viewport. The grid above already prevents this with minmax(0,1fr)
+     for normal content, but defensive belts + suspenders. */
+  overflow-x: hidden;
+}
+
+.topbar__logo {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent);
+  border-radius: var(--radius-pill);
+}
+.topbar__logo:hover { background: var(--bg-2); }
+
+.topbar__title {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 36px; padding: 0 12px;
+  border-radius: var(--radius-pill);
+  color: var(--fg);
+  font-weight: 600; font-size: 15px;
+  background: transparent;
+  max-width: 100%;
+}
+.topbar__title:hover { background: var(--bg-2); }
+.topbar__projectName {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 60vw;
+}
+.topbar__brand {
+  /* Small Claude star sits immediately before the project name as a
+     subtle brand mark — same shape as the favicon / home-screen app
+     icon, so the topbar reads as "this is a Claude chat". Coral color
+     to tie into the accent palette. */
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.topbar__chev { color: var(--fg-3); }
+
+.topbar__actions { display: inline-flex; gap: 4px; }
+.iconbtn {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  /* Topbar action icons (new-chat, menu) share the coral accent so the
+     row reads as one brand-colored cluster alongside the coral refresh
+     PNG and the coral hamburger. */
+  color: var(--accent);
+  border-radius: var(--radius-pill);
+}
+.iconbtn:hover { background: var(--bg-2); color: var(--accent-2); }
+
+/* ─── Tab strip ──────────────────────────────────────────────────────
+   Multi-tab support: each open conversation is one tab. Horizontally
+   scrollable so 4–5 tabs fit on a phone with overflow scroll. Sits
+   between the topbar and the chat scroll. Hidden when there are 0 or 1
+   tabs (then the topbar's project chip is enough). */
+.tabs {
+  display: flex;
+  align-items: stretch;
+  padding: 2px 4px 2px 8px;
+  gap: 2px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  min-height: 28px;
+}
+.tabs__scroll {
+  flex: 1 1 auto;
+  /* min-width:0 is CRITICAL. Flex items default to `min-width: auto`,
+     which means they CAN'T shrink below their intrinsic content size —
+     so with 3+ wide tabs the scroll container would stretch past the
+     viewport instead of overflowing internally, and `overflow-x: auto`
+     would never kick in. Setting min-width:0 lets the container shrink
+     to its allocated flex basis (the remaining strip width), and the
+     overflow scroll finally engages so the user can swipe through tabs. */
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  padding-right: 2px;
+}
+/* Subtle thin scrollbar so the user has a visual cue that the strip is
+   horizontally scrollable. On iOS Safari this is mostly invisible (the
+   platform draws its own transient indicator on swipe), but on desktop
+   Chrome and Android it gives a thin track. */
+.tabs__scroll::-webkit-scrollbar { height: 3px; }
+.tabs__scroll::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 2px; }
+.tabs__scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Edge fades — thin gradient hints at both ends of the strip so the user
+   knows it scrolls. Kept narrow (8px) and pinned flush to the edges so
+   they NEVER overlap a tab's close (×) button — earlier versions used a
+   wider fade inset 28px from the right (to clear an inline + button that
+   has since been removed from the strip), which sat right on top of the
+   last tab's × and made it look untappable. CSS-only, no JS. */
+.tabs {
+  position: relative;
+}
+.tabs::before, .tabs::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 8px;
+  pointer-events: none;
+  opacity: .9;
+  z-index: 1;
+}
+.tabs::before {
+  left: 0;
+  background: linear-gradient(to left, rgba(28,24,22,0), var(--bg-2));
+}
+.tabs::after {
+  right: 0;
+  background: linear-gradient(to right, rgba(28,24,22,0), var(--bg-2));
+}
+
+.tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  /* VS Code-style editor tab: short, slim, leans on width + title. The
+     left edge sits flush with the top of the strip; only the bottom has
+     a subtle border so it looks like a horizontally-arranged file tab,
+     not a freestanding pill. */
+  padding: 3px 4px 3px 8px;
+  border-radius: 6px 6px 0 0;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  color: var(--fg-2);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  max-width: 160px;
+  height: 24px;
+  transition: background 120ms var(--ease-out), transform 160ms var(--ease-out);
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: pan-x;
+}
+.tab[data-dragging="true"] {
+  transition: none;
+  z-index: 5;
+  /* Heavier shadow so the held tab visibly hovers above the strip. */
+  box-shadow: 0 10px 24px rgba(0,0,0,0.50), 0 3px 6px rgba(0,0,0,0.35);
+  opacity: 0.96;
+  cursor: grabbing;
+  /* Pop-up at the moment the long-press fires. The keyframe animates
+     scale from 1 → 1.10 → 1.06 (spring overshoot, settles a hair above
+     resting). Runs once; the JS pointermove handler later overwrites
+     `style.transform` to add the horizontal drag offset, which ends
+     this animation cleanly. Gives the user the "I am holding this
+     tab" feedback they asked for 2026-05-18. */
+  transform: scale(1.06);
+  animation: tabDragPop 240ms var(--ease-spring) both;
+}
+@keyframes tabDragPop {
+  0%   { transform: scale(1.00); }
+  55%  { transform: scale(1.10); }
+  100% { transform: scale(1.06); }
+}
+#tabsScroll[data-dragging="true"] {
+  touch-action: none;
+  overflow: hidden;
+}
+/* During a tab drag, neighbours animate sideways to open the
+   drop-slot rather than snapping. Skipped on the original (which is
+   visibility:hidden and shouldn't transition) and on the floating
+   clone (which moves via `left` and would have a jelly trail with
+   transitions). */
+#tabsScroll[data-dragging="true"] .tab:not([data-dragging="true"]) {
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1);
+}
+/* Floating clone: same look as a tab pop-up, but lifted off the
+   strip with a stronger shadow so the user can tell it's grabbed. */
+.tab.tab--ghost {
+  border-radius: 6px;
+  opacity: 0.98;
+  pointer-events: none;
+}
+.tab[data-active="true"] {
+  background: var(--bg-4);
+  color: var(--fg);
+  /* Same 1 px outlined-pill silhouette as before, just at the full
+     accent color rather than --accent-ring (which is alpha .36 and
+     reads as a barely-there hairline). One step more visible, no
+     extra weight, no underline bar, no shadow. */
+  border-color: var(--accent);
+}
+.tab__icon {
+  /* Small Claude star, mimics VS Code's file-type icon on the left of a
+     tab. Hidden when the tab is in running state — the pulsing dot
+     replaces it so the running indicator stays visible. */
+  display: inline-flex;
+  width: 12px; height: 12px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.tab__icon svg,
+.tab__icon img {
+  width: 100%; height: 100%;
+  /* Pixel-art crisp-edges so the 256x256 kawaii bridge PNG downscales
+     cleanly to the 12px tab cell without blur. */
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+.tab[data-running="true"] .tab__icon { display: none; }
+.tab__title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 500;
+}
+.tab__close {
+  /* Visible bullet is intentionally modest (20px) so the tab strip
+     keeps its compact density, but the tap target extends past the
+     visible bounds via the ::before pseudo so a thumb landing
+     anywhere in a ~36px halo still registers. Bumped from 16px
+     2026-05-18 per user feedback that the close button was hard to
+     hit. */
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  color: var(--fg-3);
+  font: inherit;
+  font-size: 16px; line-height: 1;
+  margin-left: 2px;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.tab__close::before {
+  /* Invisible 36x36 hit-test extension. -8px inset on each side keeps
+     the visible button at 20px while making a thumb-friendly tap
+     target the actual click area. pointer-events explicit so even
+     translucent overlap regions catch the touch. */
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  pointer-events: auto;
+}
+.tab__close:hover { color: var(--fg); background: var(--bg-2); }
+.tab__close:active { transform: scale(0.88); background: var(--bg-3); }
+.tab__dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: thinkPulse 1.4s var(--ease-out) infinite;
+}
+.tab:not([data-running="true"]) .tab__dot { display: none; }
+@keyframes thinkPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.85); }
+}
+.tab[data-unread="true"] .tab__title::after {
+  content: '•';
+  color: var(--accent);
+  margin-left: 4px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Per-tab attention indicator — small colored dot on the spark icon's
+   bottom-right corner. Mirrors the official VSCode Claude Code extension:
+   - Blue  = Claude is waiting on the user (AskUserQuestion / ExitPlanMode)
+   - Orange = Claude finished while the tab was hidden
+   Cleared by switchTab(). Active tab never shows a dot.
+   Reference: code.claude.com/docs/en/vs-code — "small colored dot on the
+   spark icon indicates status: blue means a permission request is pending,
+   orange means Claude finished while the tab was hidden." */
+.tab__icon { position: relative; }
+.tab[data-attention="awaiting"] .tab__icon::after,
+.tab[data-attention="finished"] .tab__icon::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--bg, #1a1614);
+  pointer-events: none;
+}
+.tab[data-attention="awaiting"] .tab__icon::after { background: #4aa3ff; }
+.tab[data-attention="finished"] .tab__icon::after { background: #f59f3a; }
+.tab[data-active="true"] .tab__icon::after { display: none; }
+
+.tabs__newBtn, .tabs__iconBtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px;
+  align-self: center;
+  border-radius: 50%;
+  color: var(--fg-2);
+  background: transparent;
+  flex-shrink: 0;
+}
+.tabs__newBtn:hover, .tabs__iconBtn:hover { color: var(--fg); background: var(--bg-3); }
+
+/* Per-tab chat panes. Only the active one is visible; others are display:none
+   so all message DOM lives in memory but only one renders. */
+.chatpane { display: none; flex-direction: column; gap: 18px; min-width: 0; max-width: 100%; }
+/* Stack of iOS-WebKit hints that together force a GPU compositor
+   layer for the active chatpane. Without ALL THREE, switching tabs
+   could leave the chat viewport painted black above whatever content
+   is currently in view until the user scrolls and triggers a repaint:
+     - `transform: translateZ(0)` is the classic "promote to layer" hint
+     - `will-change: transform` tells WebKit to retain the layer
+     - `backface-visibility: hidden` is a third "treat as 3D layer"
+       lever that some iOS builds need when the other two aren't enough
+   Combined with the explicit scrollTop nudge in applyActiveTabUi
+   (which forces a synchronous repaint on tab switch), the black-area
+   regression observed 2026-05-19 should no longer surface. */
+.chatpane[data-active="true"] {
+  display: flex;
+  transform: translateZ(0);
+  will-change: transform;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+/* Fallback pane for system messages emitted before any real tab exists
+   (e.g. /usage typed on a cold app). Stays visible alongside the empty
+   state, but yields the screen the moment a real chatpane becomes
+   active — those have data-active too, but the fallback also gets
+   data-active so we need a different rule: if ANY real chatpane is
+   data-active, hide the fallback. */
+#chat[data-has-real-pane="1"] #chatpaneFallback { display: none; }
+
+/* ─── Chat ──────────────────────────────────────────────────────────── */
+
+.chat {
+  overflow-y: auto;
+  /* Lock horizontal — without this, a wide unbroken string (long JSON, a
+     URL, a stack trace path) lets the chat pan sideways and feels like
+     the whole page is zooming/swiping out from under you. */
+  overflow-x: hidden;
+  overscroll-behavior-x: contain;
+  padding: 16px 14px 24px;
+  display: flex; flex-direction: column; gap: 18px;
+  -webkit-overflow-scrolling: touch;
+  scroll-padding-bottom: 24px;
+}
+
+/* Empty state sits close to the top of the chat container so there's no
+   yawning gap between the tabs strip and the hero. Previously it used
+   `margin: auto` which vertically centered it in the (large) 1fr chat
+   row — fine when the chat had no tabs above it, but with the tabs strip
+   stacked on top it left an enormous dark band between the two. */
+.chat__empty {
+  margin: 0 auto;
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 16px 24px 20px;
+  width: 100%;
+  max-width: 360px;
+}
+
+/* Loading row shown inside a chatpane while past-session messages are
+   being fetched. Centered orange spinner + caption. Reuses the same
+   spinner glyph rotation as the "thinking" indicator on live runs so the
+   feel is consistent. Removed by JS once the replay is rendered. */
+.chat__loading {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 32px 16px;
+  color: var(--fg-2);
+}
+.chat__loading__spinner {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(14,110,110,0.25);
+  border-top-color: var(--accent);
+  animation: chatLoadSpin 0.8s linear infinite;
+}
+@keyframes chatLoadSpin {
+  to { transform: rotate(360deg); }
+}
+.chat__loading__label {
+  font-size: 13px;
+  color: var(--fg-3);
+  letter-spacing: 0.02em;
+}
+/* Pixel-art mascot in coral, scaled down so it doesn't dominate the
+   screen now that the empty state sits at the top. Legacy class kept
+   in case any older code path references it; the live empty-state now
+   uses .chat__mascot below. */
+.chat__emptyClawd {
+  width: 96px; height: 80px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent);
+  margin-bottom: 2px;
+  animation: clawdBob 4s var(--ease-out) infinite alternate;
+}
+.chat__emptyClawd svg { width: 100%; height: auto; }
+@keyframes clawdBob {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-6px); }
+}
+
+/* Empty-state mascot: just the kawaii teal blob doing little bounces.
+   The bridge image was dropped 2026-05-18 per user request — the
+   splash already carries the bridge moment, the empty state reads
+   cleaner with the blob alone. CSS-only animation so it runs while
+   the JS thread is busy streaming text. */
+.chat__mascot {
+  /* The blob lives directly in this flex item, no abs-positioned
+     bridge layer to accommodate anymore. Sized to fit the blob. */
+  width: 128px;
+  height: 128px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  margin-bottom: 8px;
+  /* image-rendering: pixelated keeps the chunky pixel edges crisp on
+     iOS Safari and Chromium when the source PNGs get upscaled at
+     retina densities. shape-rendering covers Firefox / older WebKit. */
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  shape-rendering: crispEdges;
+}
+.chat__mascotBlob {
+  width: 110px;
+  height: 110px;
+  image-rendering: inherit;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  pointer-events: none;
+  /* transform-origin at the bottom keeps the squash on landing reading
+     as compression onto the floor rather than mid-air shrink. */
+  transform-origin: 50% 100%;
+  animation: kawaiiBounce 1.4s ease-in-out infinite;
+  /* Respect the user's reduced-motion preference — iOS exposes this
+     prominently and animation lovers expect it to be honoured. */
+}
+@keyframes kawaiiBounce {
+  0%   { transform: translateY(0)     scaleY(1.00); }
+  20%  { transform: translateY(-14px) scaleY(1.04); }
+  45%  { transform: translateY(-18px) scaleY(1.06); }
+  70%  { transform: translateY(-6px)  scaleY(1.02); }
+  85%  { transform: translateY(0)     scaleY(0.94); }   /* squash on landing */
+  100% { transform: translateY(0)     scaleY(1.00); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat__mascotBlob { animation: none; }
+}
+.chat__emptyTitle {
+  /* font-family explicit (not just inherited) — the inline <style> in
+     <head> already sets it on html/body, but the empty title is the
+     most visible text on first paint and we want zero ambiguity. */
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif;
+  font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+  color: var(--fg);
+  margin-top: 2px;
+}
+.chat__emptyHint {
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif;
+  font-size: 13px; line-height: 1.45;
+  color: var(--fg-2);
+  max-width: 280px;
+}
+/* (removed CTA — the topbar title + the + button both lead the user from
+   here, the CTA was visual noise.) */
+
+/* Messages */
+.msg { display: flex; flex-direction: column; gap: 6px; max-width: 100%; animation: fadeUp 240ms var(--ease-out) both; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.msg--user { align-items: flex-end; }
+/* Chat-app feel: user messages clearly indented from the LEFT edge so
+   the right-alignment reads as a "you said" bubble, not a full-width
+   block that happens to anchor right. Assistant messages get a small
+   right-side margin so they don't visually merge with the user bubbles
+   above/below. Together this gives the conversation the asymmetric
+   silhouette you expect from iMessage / Claude.ai mobile. */
+.msg--user .msg__bubble,
+.msg--user .msg__bubble--combo {
+  max-width: 78%;
+  margin-left: auto;
+}
+.msg--asst .msg__head,
+.msg--asst .msg__stream,
+.msg--asst .msg__actions {
+  max-width: 92%;
+  margin-right: auto;
+}
+
+/* Inline action row under assistant + system messages. Sized to match
+   Claude.ai's mobile chrome — 36px buttons with 18px icons — so they're
+   discoverable without being aggressive. User messages don't use this
+   row; they use a long-press popover instead (see .msgPopover). */
+.msg__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  opacity: 0.78;
+  transition: opacity 140ms var(--ease-out);
+}
+.msg__actions:hover,
+.msg__actions:focus-within,
+.msg:active .msg__actions {
+  opacity: 1;
+}
+.msg--asst .msg__actions { align-self: flex-start; }
+.msg__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--accent-ring);
+  /* Fully round — circular tap target reads as "interactive icon" the
+     way iOS / Material patterns expect, vs. a "card button". */
+  border-radius: 50%;
+  background: var(--bg-2);
+  /* Coral icon by default — matches the popover and the rest of the
+     accent-colored affordances. Was --fg-2 (muted) but the user
+     wanted them in the same brand color. */
+  color: var(--accent);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out), border-color 120ms var(--ease-out), transform 80ms var(--ease-spring);
+}
+.msg__action:hover { background: var(--bg-3); border-color: var(--accent); }
+.msg__action:active { transform: scale(0.92); background: var(--accent-soft); border-color: var(--accent); }
+/* While the Speak button is reading aloud, paint it in the accent
+   color so it's clear which message is the one talking. Subtle pulse
+   so the icon doesn't read as a static "selected" state — it's an
+   ongoing action. */
+.msg__action--speaking {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  animation: msgSpeakingPulse 1.6s ease-in-out infinite;
+}
+@keyframes msgSpeakingPulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50%      { box-shadow: 0 0 0 6px transparent; }
+}
+
+/* Karaoke-style highlight for the word the TTS engine is currently
+   reading. Spans are injected by TTS.toggle() around every word in
+   .msg__body, then a single span gets .tts-word--active for the
+   duration of its boundary event. The background uses the accent
+   color at low alpha so it sits on the prose without obscuring it. */
+.tts-word {
+  transition: background-color 80ms linear, color 80ms linear;
+  -webkit-tap-highlight-color: transparent;
+  /* DO NOT set cursor:pointer or :active background here. iOS Safari
+     treats spans that LOOK like buttons (cursor:pointer + :active bg)
+     as tap targets, which means a long-press fires the callout menu
+     WITHOUT initiating text selection — the selection flashes and
+     disappears, leaving the menu pointing at nothing. The tap-to-
+     start-reading affordance still works via the pointerdown/
+     pointerup listeners attached in JS; we just don't visually
+     advertise it on these spans, so the user can long-press to
+     select prose like in any normal browser. Reported 2026-05-19. */
+}
+@media (hover: hover) and (pointer: fine) {
+  /* Desktop only: it's fine to hint clickability with a pointer
+     cursor since the iOS selection bug doesn't apply. */
+  .tts-word:hover { cursor: pointer; background: var(--accent-soft); border-radius: 3px; }
+}
+.tts-word--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* When the user has switched off "Read messages aloud" in the menu,
+   hide every TTS-affordance: the inline Speak button under each
+   assistant bubble, the composer-row stop pill, and the cursor on
+   each prose word (so taps don't feel ambiguous). The handlers also
+   no-op via TTS._enabled — this is the visual half of the disable. */
+body.crc-tts-disabled .msg__action--speak,
+body.crc-tts-disabled #ttsStopBtn {
+  display: none !important;
+}
+body.crc-tts-disabled .tts-word {
+  cursor: default;
+}
+
+/* Voice picker sheet — search box pinned to the top, sticky so the
+   list scrolls underneath while the filter input stays in reach. */
+.voiceSearch {
+  padding: 8px 16px 12px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-1);
+  z-index: 1;
+}
+.voiceSearch__input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 15px;
+  font-family: inherit;
+  color: var(--fg);
+  background: var(--bg-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.voiceSearch__input:focus {
+  border-color: var(--accent-ring);
+  background: var(--bg-2);
+}
+.voiceSearch__input::placeholder { color: var(--fg-3); }
+
+/* Each voice row in the voice sheet gets a speaker preview button on
+   the right. It's a separate tap target — pressing it ONLY previews
+   the voice, it does NOT select the voice. Tapping anywhere else on
+   the row still selects. */
+.voiceList__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.voiceList__rowMain { flex: 1 1 auto; min-width: 0; }
+.voiceList__preview {
+  flex: 0 0 38px;
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--bg-4);
+  color: var(--fg-2);
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out), transform 100ms var(--ease-spring);
+  -webkit-tap-highlight-color: transparent;
+}
+.voiceList__preview:hover { background: var(--bg-4); color: var(--fg); }
+.voiceList__preview:active { transform: scale(0.94); }
+.voiceList__preview--speaking {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  animation: msgSpeakingPulse 1.6s ease-in-out infinite;
+}
+.voiceList__preview svg { width: 18px; height: 18px; display: block; }
+
+/* Pop-out effect when a user message is long-pressed. The bubble
+   scales up slightly + gets a soft drop shadow, signaling "this is
+   the message the popover is acting on". Matches the iMessage /
+   Claude.ai mobile pattern. */
+.msg__bubble,
+.toolcard,
+.md-pre {
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 220ms var(--ease-out);
+  will-change: transform;
+}
+.msg--popped .msg__bubble,
+.toolcard.msg--popped,
+.md-pre.msg--popped {
+  transform: scale(1.04);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.32),
+              0 16px 40px rgba(0,0,0,0.22);
+  /* Make sure the lifted element paints above siblings — without this
+     a Bash code block can lift behind its OUT panel that follows. */
+  position: relative;
+  z-index: 5;
+}
+
+/* Long-press popover for USER messages — Copy + Edit. Floats above
+   everything else (z-index above sheets). Two-layer shadow + slight
+   spring-in. Patterned on Claude.ai's mobile "hold to see options". */
+.msgPopover {
+  position: fixed;
+  z-index: 8000;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.32), 0 16px 36px rgba(0,0,0,0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0;
+  transform: scale(0.94) translateY(-4px);
+  transform-origin: top right;
+  transition: opacity 140ms var(--ease-out), transform 140ms var(--ease-spring);
+  pointer-events: none;
+}
+.msgPopover--open {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  pointer-events: auto;
+}
+.msgPopover__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 16px 11px 12px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 100ms var(--ease-out);
+}
+.msgPopover__item:hover { background: var(--bg-3); }
+.msgPopover__item:active { background: var(--accent-soft); color: var(--accent); }
+.msgPopover__item svg {
+  flex-shrink: 0;
+  color: var(--accent);
+  width: 20px;
+  height: 20px;
+}
+/* Destructive item (Delete). Red text + icon so the action reads as
+   intentional and dangerous; tap state warms the background to match. */
+.msgPopover__item--destructive { color: #e6685a; }
+.msgPopover__item--destructive svg { color: #e6685a; }
+.msgPopover__item--destructive:hover { background: rgba(230, 104, 90, 0.10); }
+.msgPopover__item--destructive:active {
+  background: rgba(230, 104, 90, 0.18);
+  color: #e6685a;
+}
+/* Exit animation after Delete is tapped. The JS pulls the element out
+   of the DOM after this transition finishes. */
+.msg--deleting {
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+  opacity: 0;
+  transform: scale(0.92);
+  pointer-events: none;
+}
+.msg__bubble {
+  box-sizing: border-box;
+  max-width: 90%;
+  min-width: 0;
+  padding: 10px 14px;
+  background: var(--accent-soft);
+  /* Padding-area is NOT user-selectable — iOS shouldn't try to
+     highlight text when the touch lands on padding. Inner
+     .msg__bubbleText overrides this to user-select: text so the
+     actual content is still selectable. -webkit-touch-callout: none
+     additionally suppresses the iOS "tap-and-hold to share/copy"
+     system menu, which was firing concurrently with our popover. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  border: 1px solid var(--accent-ring);
+  border-radius: 18px 18px 4px 18px;
+  color: var(--fg);
+  white-space: pre-wrap; word-wrap: break-word;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+}
+/* Combined bubble (attachments + text in one container, like VSCode's
+   chat input). The outer .msg__bubble--combo holds no padding itself;
+   the attachments row and text row each get their own padding, with a
+   1px divider between them. */
+.msg__bubble--combo {
+  padding: 0;
+  overflow: hidden;   /* keep the rounded corners clean */
+}
+.msg__bubbleAttachments {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--accent-ring);
+}
+.msg__bubbleText {
+  padding: 10px 14px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+/* User messages: entire bubble is non-selectable. Long-press fires
+   our popover (Copy / Edit) instead of iOS's native text selection.
+   The two used to race — popover + highlighter would both appear.
+   Per the user's clarified intent, popover ALWAYS wins on user
+   messages; fine-grained selection happens after Edit loads the
+   text into the composer (which IS selectable). */
+.msg--user .msg__bubble,
+.msg--user .msg__bubbleText {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+/* Assistant messages: text is still freely selectable so the user
+   can grab a single sentence from Claude's response with iOS native
+   handles. The bubble doesn't have a coral surface for assistant
+   messages, so there's no padding-vs-text distinction to make. */
+.msg--asst .msg__body,
+.msg--asst .msg__body * {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+.msg__bubbleText:empty { display: none; }
+
+/* Small grayish "Interrupted" chip rendered inside a user bubble after
+   the user taps Stop on a mid-flight Claude run. Edit-and-resend on
+   such a bubble REPLACES the bubble in place — see _enterMessageEdit
+   save handler. */
+.msg__interruptedTag {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--fg-3);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  user-select: none;
+}
+.msg--interrupted .msg__bubble {
+  /* Subtle dim so it's clear the prompt didn't fully resolve. */
+  opacity: 0.78;
+}
+/* Queued user bubble: rendered while a previous run is still in flight
+   to confirm the typed prompt landed somewhere. Visually distinct from
+   a live bubble — dimmed body + a "Queued" pill — so the user reads it
+   as "scheduled to send" rather than "already sent." Auto-fired when
+   the current run's run_finished frame arrives. */
+.msg--queued .msg__bubble {
+  opacity: 0.62;
+  border: 1px dashed var(--line-strong);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+.msg__queuedTag {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  border-radius: 999px;
+  user-select: none;
+}
+/* When the text row is empty (attachment-only message), pull the
+   bottom divider so the bubble still has a clean rounded base. */
+.msg__bubble--combo .msg__bubbleAttachments:last-child {
+  border-bottom: none;
+}
+
+/* ─── In-place message edit ─────────────────────────────────────────
+   When the user picks Edit from the long-press popover, the message
+   bubble transforms in place: the static text is hidden and a
+   textarea + Save/Cancel footer replaces it. Composer at the bottom
+   is hidden too so there is only ONE input field on screen at a time.
+   The jump-to-bottom + new-messages pills are also suppressed so
+   they don't overlap the edit footer. */
+.msg--editing .msg__bubbleText { display: none !important; }
+.msg__editArea {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  min-width: min(260px, 70vw);
+}
+.msg__editInput {
+  width: 100%;
+  min-height: 96px;
+  max-height: 50vh;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--bg-1, #211c19);
+  color: var(--fg);
+  border: 1px solid var(--accent-ring);
+  border-radius: 12px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  resize: vertical;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+.msg__editInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.msg__editActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.msg__editBtn {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 100ms var(--ease-spring), background 120ms var(--ease-out);
+}
+.msg__editBtn:active { transform: scale(0.96); }
+.msg__editBtn--cancel {
+  background: transparent;
+  color: var(--fg-2, #c7bfb6);
+  border: 1px solid var(--accent-ring);
+}
+.msg__editBtn--cancel:hover { background: var(--bg-2, #2a231e); }
+.msg__editBtn--save {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent-2);
+}
+.msg__editBtn--save:hover { background: var(--accent-2); }
+
+/* While an edit is open anywhere in the chat, dim/hide the composer
+   and any floating pills so the editor is the only input affordance. */
+body.crc-editing #composer { display: none !important; }
+body.crc-editing #jumpBottomBtn,
+body.crc-editing #newMessagesPill { display: none !important; }
+
+.msg--asst { align-items: flex-start; }
+.msg__head {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--fg-3);
+  font-weight: 500;
+}
+.msg__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 var(--accent-ring);
+}
+.msg--running .msg__dot { animation: pulse 1.4s var(--ease-out) infinite; }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 var(--accent-ring); }
+  70%  { box-shadow: 0 0 0 8px rgba(14, 110, 110, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(14, 110, 110, 0); }
+}
+
+.msg__tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-3);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.msg__body {
+  /* border-box so max-width: 100% accounts for the left padding +
+     border. With the default content-box, max-width:100% sets only
+     the CONTENT width to 100% of the parent, then padding-left (15px)
+     + border-left (2px) get added on top, making the rendered box
+     ~17px wider than its container. That overflowed past the chat's
+     overflow-x:hidden edge, so text on the right got visually cut. */
+  box-sizing: border-box;
+  font-size: 15px; line-height: 1.55;
+  color: var(--fg);
+  /* Switched from pre-wrap to normal — the markdown renderer now
+     produces real block elements (<p>, <pre>, <ul>, ...) so we don't
+     need pre-wrap to preserve newlines anymore. overflow-wrap:anywhere
+     forces long unbroken strings (URLs, paths, stack traces, JSON
+     blobs) to break instead of pushing the chat sideways. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  /* The body container itself stays LTR — the assistant-icon dot sits
+     to its left and the vertical line follows the dot. RTL behaviour
+     applies INSIDE each block (<p dir="auto">, <li dir="auto">, ...)
+     via the Unicode Bidi Algorithm. */
+  padding-left: 15px;     /* aligns with the dot */
+  border-left: 2px solid var(--line);
+  margin-left: 3px;
+  max-width: calc(100% - 3px);   /* leave room for the 3px left margin */
+  min-width: 0;
+}
+.msg__body p {
+  margin: 0 0 8px 0;
+  /* text-align:start makes a [dir="auto"] paragraph that resolves to
+     RTL align right, and an LTR paragraph align left. Without this,
+     a Hebrew paragraph would still render with its first line snapping
+     to the left edge of the bubble. */
+  text-align: start;
+}
+.msg__body p:last-child { margin-bottom: 0; }
+.msg__body code, .md-code {
+  font-family: var(--font-mono); font-size: 13px;
+  background: var(--bg-2); padding: 1px 5px; border-radius: 4px;
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Dedicated code-block card. Distinguishes a multi-line snippet from
+   surrounding prose with its own monospace background, top-bar showing
+   the language + copy button, and overflow scroll if a single line is
+   wider than the chat. */
+.md-pre {
+  box-sizing: border-box;
+  position: relative;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-tile);
+  margin: 8px 0;
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+}
+.md-pre__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 10px 4px 12px;
+  background: var(--bg-3);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--fg-3);
+  text-transform: lowercase;
+  font-family: var(--font-mono);
+}
+.md-pre__lang {
+  letter-spacing: 0.04em;
+}
+.md-pre__copyBtn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--fg-3);
+  background: transparent; border: none; padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+.md-pre__copyBtn:hover { color: var(--fg); background: var(--bg-2); }
+.md-pre__copyBtn[data-copied="true"] { color: var(--accent); }
+.md-pre__body {
+  padding: 10px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: 220px;          /* collapse-by-default for long snippets */
+  transition: max-height 220ms var(--ease-out);
+}
+.md-pre[data-expanded="true"] .md-pre__body {
+  max-height: 60vh;
+}
+.md-pre__expandBtn {
+  display: none;
+  width: 100%;
+  padding: 6px;
+  font-size: 11px;
+  color: var(--fg-3);
+  background: var(--bg-3);
+  border: none;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.md-pre[data-overflow="true"] .md-pre__expandBtn { display: block; }
+.md-pre__expandBtn:hover { color: var(--fg); }
+.md-pre code {
+  font-family: var(--font-mono); font-size: 12px;
+  background: transparent; border: none; padding: 0;
+  /* On phones, prefer wrapping over horizontal scroll — the user
+     can't read what's off-screen if it requires a horizontal swipe.
+     pre-wrap preserves intentional newlines/indentation; word-break
+     and overflow-wrap kick in for any single line wider than the
+     code-block body. Slightly smaller font to fit more per line. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--fg);
+  display: block;
+}
+
+/* Inline markdown elements. */
+.msg__body strong { font-weight: 700; color: var(--fg); }
+.msg__body em { font-style: italic; }
+.msg__body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg__body h1, .msg__body h2, .msg__body h3 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  margin: 12px 0 4px 0;
+  /* Match the per-block dir="auto" so Hebrew headings flow RTL. */
+  text-align: start;
+}
+.msg__body h1 { font-size: 18px; }
+.msg__body h2 { font-size: 16px; }
+.msg__body h3 { font-size: 15px; }
+.msg__body ul, .msg__body ol {
+  margin: 4px 0 8px 0;
+  /* Logical property so the list-marker indent sits on the START side
+     of the resolved direction. A Hebrew list reads from right to left,
+     so its bullets/numbers belong on the right; an English list keeps
+     them on the left. */
+  padding-inline-start: 22px;
+  padding-left: 0;
+}
+.msg__body ul li, .msg__body ol li {
+  margin: 2px 0;
+  text-align: start;
+  /* `list-style-position: inside` puts the bullet INSIDE each <li>'s
+     content box. Combined with dir="auto" on the <li>, the marker now
+     sits on whichever side each item's resolved direction calls "start"
+     — right for Hebrew items, left for English items, in the same
+     mixed list. The default `outside` placement puts the marker in the
+     UL's padding, which follows the UL's direction (not the LI's), so
+     Hebrew items in an otherwise-LTR list rendered with the bullet on
+     the wrong side. Trade-off: wrapped lines of a long item now align
+     under the first letter instead of indenting past the bullet — fine
+     for chat content. Reported 2026-05-19. */
+  list-style-position: inside;
+}
+/* Cancel the UL's start-padding now that the markers live inside the
+   <li>. Otherwise we'd get the bullet plus an additional indent which
+   looks lopsided. */
+.msg__body ul, .msg__body ol { padding-inline-start: 6px; }
+.msg__body blockquote {
+  margin: 8px 0;
+  padding: 4px 10px;
+  /* border-inline-start = left bar in LTR, right bar in RTL — visually
+     consistent for English quotes AND Hebrew quotes. */
+  border-inline-start: 3px solid var(--accent-soft);
+  color: var(--fg-2);
+  font-style: italic;
+  text-align: start;
+}
+
+/* Defense-in-depth for the bidi direction attribute. When the markdown
+   renderer stamps dir="rtl" / dir="ltr" on a block, the `dir` HTML
+   attribute alone is supposed to set the CSS `direction` property AND
+   `unicode-bidi: isolate`. iOS Safari mostly honors that, but a stale
+   cached layout (especially in standalone PWA mode after a JS hot-swap)
+   sometimes keeps the old computed direction for an existing element.
+   Forcing `direction:` via the attribute selector makes the CSS
+   recompute on the next layout and guarantees `text-align: start`
+   resolves correctly. Reported by user 2026-05-19. */
+.msg__body p[dir="rtl"],
+.msg__body li[dir="rtl"],
+.msg__body blockquote[dir="rtl"],
+.msg__body h1[dir="rtl"],
+.msg__body h2[dir="rtl"],
+.msg__body h3[dir="rtl"] {
+  direction: rtl;
+  text-align: right;
+}
+.msg__body p[dir="ltr"],
+.msg__body li[dir="ltr"],
+.msg__body blockquote[dir="ltr"],
+.msg__body h1[dir="ltr"],
+.msg__body h2[dir="ltr"],
+.msg__body h3[dir="ltr"] {
+  direction: ltr;
+  text-align: left;
+}
+.msg__body hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--line);
+}
+
+.msg__status {
+  font-size: 12px; color: var(--fg-3);
+  margin-left: 18px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.msg__status--done   { color: var(--ok); }
+.msg__status--stopped{ color: var(--warn); }
+/* Errors get a more prominent treatment — the message body explains
+   the cause (e.g. "session is in use by another Claude Code window"),
+   so the chip needs enough weight that the user actually reads it. */
+.msg__status--error  {
+  color: var(--danger);
+  display: flex;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  margin: 6px 0 0 18px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: 10px;
+  max-width: calc(100% - 36px);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* "Still working" indicator — Claude's spinner + a rotating status word.
+   Shows above the streaming text initially; once text arrives, it stays
+   below the text as a live "Claude is still working on this" signal until
+   the run finishes. Mirrors Claude Code's REPL. */
+.msg__thinking {
+  /* Always rendered as its own row beneath the latest content so the
+     propeller + cycling word combo is unmistakable. Bumped to `flex`
+     (was `inline-flex`) so it takes a full line — easier to spot on a
+     narrow phone screen, where the inline variant could end up next to
+     a trailing piece of text and visually merge into it. */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 18px;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  color: var(--fg);
+  font-size: 14px;
+}
+/* When run finishes, .msg--running is removed; we then hide the spinner
+   immediately so static finished messages don't keep animating. */
+.msg:not(.msg--running) .msg__thinking { display: none; }
+/* Belt-and-braces: if WS reconnects mid-run create an orphan container
+   (the old run's runId is lost and a NEW container is built for the same
+   logical run), the orphan keeps `.msg--running` forever and its
+   spinner sits at the TOP of the chat next to the user message —
+   reported 2026-05-16 with screenshot. Only show the spinner on the
+   LAST .msg--asst.msg--running in the pane; everything earlier is
+   either truly completed or orphaned and should hide its thinking. */
+.msg--asst.msg--running:has(~ .msg--asst.msg--running) .msg__thinking { display: none; }
+/* Pin the "still working" row to the bottom of the assistant bubble
+   via flex `order` instead of moving its DOM node on every new
+   segment. Pre-2026-05-17 Chat._hideThinkingFor called
+   container.appendChild(thinking) after each delta / tool-card /
+   media event to keep this row visually last — but `appendChild` on
+   an existing child node restarts any in-flight CSS animation, which
+   is what was making the kawaii mascot keep re-starting its bounce
+   from frame 0 every time new text arrived. Using `order: 99` keeps
+   the row visually last (every sibling defaults to `order: 0`) and
+   the DOM stays still, so the bounce animation runs continuously
+   until run_finished removes the row. */
+.msg__thinking { order: 99; }
+
+/* Tiny kawaii blob bouncing in the running-indicator row. Same
+   character + animation as the empty-state mascot, scaled to 18px so
+   it fits inline with the cycling word. CSS-only animation runs
+   independent of the spinner/word/dots, so the layered movement feels
+   alive without being distracting. Added 2026-05-17. */
+.thinking__mascot {
+  width: 18px;
+  height: 18px;
+  vertical-align: -4px;
+  margin-right: 4px;
+  /* Crisp pixel edges at small size — same pattern as .tab__icon img. */
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  transform-origin: 50% 100%;
+  animation: thinkingMascotBounce 1.2s ease-in-out infinite;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+@keyframes thinkingMascotBounce {
+  0%   { transform: translateY(0)   scaleY(1.00); }
+  25%  { transform: translateY(-3px) scaleY(1.04); }
+  50%  { transform: translateY(-5px) scaleY(1.06); }
+  80%  { transform: translateY(0)   scaleY(0.94); }
+  100% { transform: translateY(0)   scaleY(1.00); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking__mascot { animation: none; }
+}
+
+/* The actual Claude Code spinner: a single text glyph swapped by JS every
+   110–180ms (per-frame timing in app.js). currentColor → accent. Display:
+   inline-block + tabular width so glyphs of different widths don't make
+   the next-word jitter on each frame. */
+.thinking__spinner {
+  display: inline-block;
+  color: var(--accent);
+  width: 1em;
+  text-align: center;
+  font-feature-settings: 'tnum' 1;
+  /* Slight glow makes the small glyph feel alive on the dark bg. */
+  text-shadow: 0 0 8px rgba(14, 110, 110, 0.45);
+}
+.thinking__word {
+  /* Italic + medium weight so the cycling word reads as a status
+     label, distinct from the surrounding chat text. Slight color
+     accent keeps it grouped with the coral spinner glyph next to it. */
+  font-weight: 500;
+  font-style: italic;
+  color: var(--fg);
+  letter-spacing: 0.01em;
+}
+.thinking__dots {
+  font-weight: 600;
+  color: var(--fg-3);
+  animation: thinkDots 1.4s steps(4, end) infinite;
+  width: 1.2em;
+  display: inline-block;
+}
+@keyframes thinkDots {
+  0%   { clip-path: inset(0 100% 0 0); }
+  100% { clip-path: inset(0 0 0 0); }
+}
+
+/* Stream: chronological list of text bodies and tool-call cards inside an
+   assistant message. They flow top-to-bottom in the order claude produced
+   them — text, tool, more text, another tool, etc. — so the freshest
+   segment is always the last child, sitting right above the spinner. */
+.msg__stream {
+  display: flex; flex-direction: column;
+  gap: 4px;
+  /* `.msg--asst { align-items: flex-start }` means children of .msg
+     don't stretch to fill .msg — they shrink to their content's
+     intrinsic width. A wide segment (long code-block, an unbreakable
+     URL inside a paragraph) would then make .msg__stream wider than
+     .msg itself, and the inner .msg__body would inherit that wider
+     bound and overflow the chat container. Forcing width: 100% pins
+     the stream to its parent regardless of intrinsic content width. */
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.msg__stream .msg__body {
+  /* When a text body is one of many segments, drop the left rule and
+     padding so consecutive bodies don't double-rule. Re-state
+     box-sizing: border-box here so we don't depend on cascading from
+     the .msg__body rule above — keeps right-edge clipping fixed even
+     if a future change to .msg__body forgets the property. */
+  box-sizing: border-box;
+  padding-left: 15px;
+  border-left: 2px solid var(--line);
+  margin-left: 3px;
+  max-width: calc(100% - 3px);
+  min-width: 0;
+}
+
+/* Tool-call card: compact pill-rectangle showing what claude just invoked
+   (Edit foo.py, Bash `git status`, …). Lives inline in the message stream
+   between text segments, in the order claude ran them. */
+.toolcard {
+  margin: 6px 0 6px 18px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  display: flex; flex-direction: column; gap: 2px;
+  max-width: calc(100% - 18px);
+  /* Chrome (header/padding) is non-selectable so iOS doesn't steal
+     long-press for native text selection. The .toolcard__detail and
+     code-block descendants re-enable selection below so the user can
+     still drag-select substrings of the actual content. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.toolcard__detail,
+.md-codeblock,
+.md-pre__body {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+.toolcard__head {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--accent);
+  /* min-width: 0 lets a flex child shrink below its content-derived
+     intrinsic width — without it any unbreakable long tool-name
+     string (e.g. a deeply-namespaced MCP tool like
+     `some__provider__do_a_long_action`) forces the header wider
+     than the card, overflowing the right edge on the phone
+     viewport. Reported by user 2026-05-17. Paired with
+     overflow-wrap on .toolcard__name below. */
+  min-width: 0;
+}
+/* "running…" badge shown on Agent toolcards while the subagent is
+   still working. Swapped to "done" by the `agent_complete` handler. */
+.toolcard__runbadge {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-ring);
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+}
+.toolcard--agent-running .toolcard__runbadge {
+  animation: agentRunPulse 1.4s ease-in-out infinite;
+}
+.toolcard__runbadge--done {
+  background: transparent;
+  color: var(--fg-3);
+  border-color: var(--line);
+  animation: none;
+}
+@keyframes agentRunPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.toolcard__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  flex-shrink: 0;
+}
+.toolcard__name {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  /* Allow long underscore-heavy SDK tool names to wrap onto multiple
+     lines inside the card instead of clipping past the rounded right
+     edge. `overflow-wrap: anywhere` breaks at any character so
+     unbreakable strings collapse; `word-break: break-word` is the
+     iOS Safari fallback for older WebKit. min-width:0 inside the
+     flex header (.toolcard__head) is what actually permits the
+     shrink — see comment there. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* Subagent type chip on Agent / Task cards — e.g. "researcher",
+   "code-reviewer". Sits right after the tool name so the title reads
+   "Agent · researcher" at a glance. Neutral colour so it doesn't fight
+   the running badge for attention. */
+.toolcard__subtype {
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+}
+.toolcard__subtype::before { content: "· "; opacity: 0.5; }
+.toolcard__detail {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  max-height: 4.5em;        /* clamp long commands; user sees the gist */
+}
+/* When the card has a diff (Edit/Write/NotebookEdit), the file-path stays
+   as a single line and the diff takes the vertical size. Same goes for
+   when the card embeds a fenced code block (Bash/PowerShell/Task): we
+   want the short description on one line and the code itself below it. */
+.toolcard:has(.toolcard__diff) .toolcard__detail,
+.toolcard:has(.toolcard__code) .toolcard__detail,
+.toolcard:has(.todolist) .toolcard__detail {
+  max-height: 1.5em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* TodoWrite checklist — matches what the Claude Code VSCode extension
+   shows: a filled coral check for completed items, a coral ring for
+   in-progress, hollow circle for pending. Completed text gets the
+   strike-through; in-progress is bold so the user sees what's
+   actively being worked on. */
+.todolist {
+  list-style: none;
+  padding: 4px 2px 2px;
+  margin: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Disable iOS's tap-to-open callout for any auto-detected
+     pattern (dates, paths, emails) Claude might write into
+     a todo item. Without this, long-pressing such an item
+     opens Safari's "Open / Copy / Add to Reading List" sheet
+     instead of our Copy popover, and an accidental tap on
+     the detected phantom link navigates the PWA to a 404. */
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.todolist a {
+  /* Belt + braces: even if a literal <a> shows up in todo text
+     (it shouldn't — we only emit text nodes), strip its
+     navigation default. */
+  pointer-events: none;
+  color: inherit;
+  text-decoration: none;
+}
+.todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--fg);
+}
+.todo__check {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 4px;
+}
+.todo--completed .todo__check {
+  background: var(--accent);
+  color: #fff;
+}
+.todo--in_progress .todo__check { color: var(--accent); }
+.todo--pending .todo__check { color: var(--fg-3); }
+.todo--completed .todo__text {
+  text-decoration: line-through;
+  color: var(--fg-3);
+}
+.todo--in_progress .todo__text {
+  font-weight: 600;
+  color: var(--fg);
+}
+.todo--pending .todo__text { color: var(--fg-2); }
+.todo__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* AskUserQuestion interactive card. Mirrors the desktop extension's
+   look: a header chip with the question category, the question itself
+   above a list of selectable options. Tap an option to pick it
+   (single-select = radio behavior; multi-select = checkbox). Each
+   question also has a free-text "Other" input. Submit ships the
+   answers as the next user message in the tab. */
+.askq {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.askq__q {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.askq__header {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.askq__text {
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--fg);
+  font-weight: 500;
+}
+.askq__opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.askq__opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out), transform 80ms var(--ease-spring);
+  -webkit-tap-highlight-color: transparent;
+}
+.askq__opt:active { transform: scale(0.98); }
+.askq__opt:hover { background: var(--bg-4); }
+.askq__opt[data-selected="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+}
+.askq__opt[disabled] { opacity: 0.6; cursor: default; transform: none; }
+.askq__dot {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong, var(--line));
+  background: transparent;
+  transition: border-color 120ms var(--ease-out), background 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
+}
+.askq__opt[data-selected="true"] .askq__dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--bg-3);
+}
+.askq__optMain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.askq__optLabel {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg);
+  line-height: 1.35;
+}
+.askq__optDesc {
+  font-size: 12.5px;
+  color: var(--fg-2);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.askq__otherInput {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.askq__otherInput::placeholder { color: var(--fg-3); }
+.askq__otherInput:focus {
+  outline: none;
+  border-color: var(--accent-ring);
+  background: var(--bg-4);
+}
+.askq__otherInput[disabled] { opacity: 0.6; }
+.askq__submit {
+  align-self: stretch;
+  margin-top: 8px;
+  padding: 12px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), transform 80ms var(--ease-spring);
+  -webkit-tap-highlight-color: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+/* "1/3" answered-count badge on multi-question Submit button. The
+   leading numeric pill mirrors the VS Code AskUserQuestion card and
+   gives the user a glance-able sense of progress through the tabs
+   without forcing them to flip through each one. */
+.askq__submitCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+/* Tab strip — only rendered when questions.length > 1. Layout: row of
+   text-only buttons, scrollable horizontally if there are many
+   questions; the active tab gets a coral underline that matches the
+   accent token used on primary CTAs. Replicates the VS Code
+   AskUserQuestion card pattern. */
+.askq__tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 -4px 4px;
+  padding: 0 4px;
+  scrollbar-width: none;
+}
+.askq__tabs::-webkit-scrollbar { display: none; }
+.askq__tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--fg-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 10px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 120ms var(--ease-out);
+}
+.askq__tab[data-active="true"] {
+  color: var(--fg);
+}
+.askq__tab[data-active="true"]::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.askq__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.askq__submit:active { transform: scale(0.98); }
+.askq__submit:hover { background: var(--accent-2); }
+.askq__submit:disabled {
+  background: var(--bg-4);
+  color: var(--fg-3);
+  cursor: default;
+  transform: none;
+}
+
+/* Answered state — used when the card is being replayed from past
+   session history, or right after the user submits. The card is
+   visually de-emphasized (slightly muted accent ring) and the
+   answer text is shown in a labeled panel below the options so the
+   user can see what they previously chose without scrolling away. */
+.askq--answered .askq__opt { opacity: 0.7; cursor: default; }
+.askq--answered .askq__opt[data-selected="true"] { opacity: 1; }
+.askq__echo {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  border-radius: 12px;
+}
+.askq__echoLabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.askq__echoText {
+  font-size: 14px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+/* Markdown tables — rendered from GFM pipe syntax by _renderMarkdown.
+   The outer wrap allows horizontal scroll on narrow screens so wide
+   tables (multiple columns) don't blow out the chat pane width.
+   Inside: a clean Anthropic-leaning palette using existing tokens. */
+.md-tableWrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+.md-table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: max-content;
+  font-size: 13px;
+}
+.md-table th,
+.md-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.45;
+  color: var(--fg);
+}
+.md-table th {
+  background: var(--bg-3);
+  font-weight: 600;
+  color: var(--fg);
+  border-bottom: 2px solid var(--accent-ring);
+  white-space: nowrap;
+}
+.md-table tbody tr:last-child td { border-bottom: none; }
+.md-table tbody tr:nth-child(odd) td { background: var(--bg-3); }
+.md-table tbody tr:nth-child(even) td { background: var(--bg-2); }
+.md-table code.md-code {
+  background: var(--bg-4);
+}
+
+/* Floating "jump to latest message" button. Anchored bottom-LEFT of
+   the viewport (per user request — leaves the right side free for
+   the send/mic buttons in the composer). Visible only when the user
+   has scrolled up far enough from the bottom that auto-follow is
+   off; tapping it scrolls to the newest message AND re-engages the
+   sticky-bottom behavior because the user is now near the bottom
+   again. Positioned above the composer with safe-area-inset padding
+   so it doesn't get pushed under the iOS home indicator. */
+.jumpBottom {
+  position: fixed;
+  left: 16px;
+  /* Sits just above the composer regardless of how many lines the user
+     has typed. --composer-h is kept in sync with #composer's
+     offsetHeight by the ResizeObserver in app.js (search
+     "_observeComposerHeight"); 96px is the fallback for the first
+     paint before the observer attaches. The 12 px gap is the visual
+     air between the button and the composer's top edge. The composer
+     already includes safe-area-inset-bottom in its padding so we don't
+     re-add it here. */
+  bottom: calc(var(--composer-h, 96px) + 12px);
+  z-index: 60;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent-2);
+  border-radius: 50%;
+  box-shadow: 0 6px 20px rgba(14, 110, 110, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms var(--ease-spring), opacity 160ms var(--ease-out);
+  animation: jumpBottomIn 220ms var(--ease-spring);
+}
+.jumpBottom:hover { background: var(--accent-2); }
+.jumpBottom:active { transform: scale(0.92); }
+@keyframes jumpBottomIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.85); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* "New messages below" pill — appears when claude streams content
+   while the user is scrolled up reading history. Distinct from the
+   jump-to-bottom button (which is a persistent affordance whenever
+   the user is scrolled up), this pill is a transient notification
+   that says "fresh content just landed." Anchored centered just
+   above the composer so it doesn't compete with the jump button on
+   the left edge. */
+.newMessagesPill {
+  position: fixed;
+  left: 50%;
+  /* See .jumpBottom — anchored to the composer's top edge via the
+     --composer-h custom property so a multi-line composer pushes both
+     affordances up together instead of overlapping. */
+  bottom: calc(var(--composer-h, 96px) + 12px);
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px 9px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent-2);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(14, 110, 110, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
+  -webkit-tap-highlight-color: transparent;
+  animation: newMessagesPillIn 220ms var(--ease-spring);
+}
+.newMessagesPill:hover { background: var(--accent-2); }
+.newMessagesPill:active { transform: translateX(-50%) scale(0.96); }
+@keyframes newMessagesPillIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.9); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* When the sessions drawer is open, the floating chat-only affordances
+   (jump-to-bottom, new-messages pill) belong to the chat view that's
+   now behind the drawer — hide them so the user doesn't see two layers
+   of UI competing for the same tap target. Restored on drawer close
+   (see openSessionsDrawer / closeSessionsDrawer in app.js). */
+body.crc-drawer-open .jumpBottom,
+body.crc-drawer-open .newMessagesPill {
+  display: none !important;
+}
+/* Same logic for the menu / workspace / uploads / history / voice
+   sheets: any open sheet means the user is NOT looking at the chat,
+   so the chat-only affordances must vanish. `:has()` selects any body
+   that contains a non-hidden sheet — iOS 16.4+ supports it, which
+   covers every iPhone the user runs the PWA on. */
+body:has(.sheet:not([hidden])) .jumpBottom,
+body:has(.sheet:not([hidden])) .newMessagesPill {
+  display: none !important;
+}
+
+/* Custom confirm dialog — used instead of native confirm() when the
+   action button needs a real label (e.g. "Compact" for the donut tap).
+   Centered modal over a dim backdrop. Two buttons side by side at the
+   bottom: cancel (neutral) and primary (coral). */
+.confirmDialog {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: confirmDialogIn 160ms var(--ease-out);
+}
+.confirmDialog__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.confirmDialog__panel {
+  position: relative;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  padding: 20px 20px 16px;
+  max-width: 360px;
+  width: 100%;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
+  animation: confirmDialogPanelIn 180ms var(--ease-spring);
+}
+.confirmDialog__text {
+  color: var(--fg);
+  font-size: 14.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 18px;
+}
+.confirmDialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.confirmDialog__btn {
+  padding: 10px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  min-width: 90px;
+  transition: background 120ms var(--ease-out), transform 80ms var(--ease-spring);
+}
+.confirmDialog__btn:hover { background: var(--bg-4); }
+.confirmDialog__btn:active { transform: scale(0.97); }
+.confirmDialog__btn--primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.confirmDialog__btn--primary:hover { background: var(--accent-2); }
+@keyframes confirmDialogIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes confirmDialogPanelIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Compact divider — dropped into the chat pane by _finalizeCompact
+   after a successful summarize run. Visually marks the boundary
+   between pre-compact history (still rendered above, but no longer
+   in claude's context) and the fresh session below. Just a coral
+   rule with a small uppercase label. */
+.msg.msg--compact,
+.msg.msg--compacting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 28px 4px 20px;
+  padding: 0;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.msg__compactBar {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--accent-ring);
+}
+.msg__compactLabel {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* Pulsing label while the silent compact run is in flight; once the
+   bridge writes the boundary the class flips to msg--compact and the
+   label stops pulsing. */
+.msg.msg--compacting .msg__compactLabel {
+  animation: compactingPulse 1.6s ease-in-out infinite;
+}
+@keyframes compactingPulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1;    }
+}
+
+/* Workspace sheet — pick / switch / create the folder where new
+   projects live. Default root comes from .env.local; active root is
+   what the user has selected this session. */
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 2px 2px;
+}
+.workspace__row { display: flex; flex-direction: column; gap: 4px; }
+.workspace__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-3);
+  text-transform: uppercase;
+}
+.workspace__path {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  word-break: break-all;
+}
+.workspace__path--muted { color: var(--fg-2); }
+.workspace__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.workspace__btn {
+  padding: 12px 14px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), transform 80ms var(--ease-spring);
+  -webkit-tap-highlight-color: transparent;
+}
+.workspace__btn:hover { background: var(--bg-4); }
+.workspace__btn:active { transform: scale(0.98); }
+.workspace__btn--primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  text-align: center;
+  font-weight: 600;
+}
+.workspace__btn--primary:hover { background: var(--accent-2); }
+.workspace__btn--muted {
+  color: var(--fg-2);
+  font-size: 13px;
+}
+
+/* Manage Uploads sheet — bulk file management for .web-uploads/. */
+.uploads { display: flex; flex-direction: column; gap: 14px; }
+.uploads__summary {
+  font-size: 13px;
+  color: var(--fg-2);
+  padding: 8px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.uploads__list { display: flex; flex-direction: column; gap: 6px; padding: 0; margin: 0; list-style: none; }
+.uploads__row {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  transition: background 100ms var(--ease-out), border-color 100ms var(--ease-out);
+}
+.uploads__rowLabel {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Hide the native checkbox but keep it accessible for keyboard / focus
+   ring; the styled `.uploads__checkBox` next to it carries the visual. */
+.uploads__check {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px; height: 1px;
+}
+.uploads__checkBox {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  border-radius: 7px;
+  border: 1.5px solid var(--line-strong);
+  background: var(--bg-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: transparent;
+  transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.uploads__check:checked + .uploads__checkBox {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.uploads__check:indeterminate + .uploads__checkBox {
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+  color: var(--accent);
+}
+.uploads__check:indeterminate + .uploads__checkBox svg {
+  display: none;
+}
+.uploads__check:indeterminate + .uploads__checkBox::after {
+  content: '';
+  width: 12px;
+  height: 2.4px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.uploads__row:has(.uploads__check:checked) {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+}
+
+.uploads__selectAllRow {
+  display: flex;
+  padding: 0 4px;
+}
+.uploads__selectAll {
+  display: inline-flex; align-items: center; gap: 10px;
+  cursor: pointer;
+  padding: 6px 4px;
+  -webkit-tap-highlight-color: transparent;
+}
+.uploads__selectAllLabel {
+  font-size: 13px;
+  color: var(--fg-2);
+  font-weight: 500;
+}
+.uploads__info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.uploads__name { font-weight: 600; color: var(--fg); font-size: 15px; }
+.uploads__meta { color: var(--fg-3); font-size: 12px; }
+.uploads__actions {
+  display: flex; gap: 8px; margin-top: 4px;
+}
+.uploads__btn {
+  flex: 1;
+  padding: 12px 14px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.uploads__btn:hover { background: var(--bg-4); }
+.uploads__btn:active { transform: scale(0.98); }
+.uploads__btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.uploads__btn--muted { color: var(--fg-2); }
+.uploads__btn--danger {
+  color: #ff8a7a;
+  border-color: rgba(255, 138, 122, 0.4);
+}
+.uploads__btn--danger:hover { background: rgba(255, 138, 122, 0.1); }
+.workspace__picker {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+}
+.workspace__pickerHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace__pickerTitle {
+  flex: 1 1 auto;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fg);
+}
+.workspace__pickerClose {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  order: 2;  /* close button on the right of the title */
+}
+
+/* Quick-shortcut row — Home, Desktop, Downloads, Documents, default
+   workspace. Horizontal scroll on narrow screens so the user can swipe
+   through them. */
+.workspace__shortcuts {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+.workspace__shortcut {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), transform 80ms var(--ease-spring);
+  -webkit-tap-highlight-color: transparent;
+}
+.workspace__shortcut:hover { background: var(--bg-4); }
+.workspace__shortcut:active { transform: scale(0.96); background: var(--accent-soft); border-color: var(--accent-ring); }
+.workspace__shortcutIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+}
+.workspace__shortcutIcon .uiIcon { width: 18px; height: 18px; }
+.workspace__shortcutLabel { white-space: nowrap; }
+
+/* Generated UI icons (tools/generate_ui_icons.py + tools/build_ui_icons.py).
+   Single coral, transparent bg PNGs. Default sizing — overridden by the
+   parent context (button, list item, etc.) when it needs a specific
+   dimension. block + no shrink prevents oddly-stretched icons in flex rows. */
+.uiIcon {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+  vertical-align: middle;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.iconbtn--img { padding: 6px; }
+.iconbtn__img { display: block; width: 22px; height: 22px; object-fit: contain; }
+
+/* Clickable breadcrumb. Each segment is a small chip; tapping it
+   jumps the picker to that ancestor without traversing intermediate
+   folders. Familiar from native file explorers. */
+.workspace__crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.workspace__crumb {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--fg-2);
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 100ms var(--ease-out), color 100ms var(--ease-out);
+}
+.workspace__crumb:hover { background: var(--bg-3); color: var(--fg); }
+.workspace__crumb:active { background: var(--accent-soft); border-color: var(--accent-ring); }
+.workspace__crumb:last-child {
+  color: var(--fg);
+  font-weight: 600;
+}
+.workspace__crumbSep {
+  color: var(--fg-3);
+  user-select: none;
+}
+
+/* ".." (up one folder) entry in the folder list — visually distinct
+   from real folders so the user can spot it at a glance. */
+.workspace__pickerItem--up {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  color: var(--fg-2);
+}
+.workspace__pickerItem--up .workspace__pickerName { font-style: italic; }
+.workspace__pickerList {
+  list-style: none;
+  padding: 4px 6px;
+  margin: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.workspace__pickerItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--fg);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.workspace__pickerItem:hover { background: var(--bg-3); }
+.workspace__pickerItem:active { background: var(--accent-soft); transform: scale(0.99); }
+.workspace__pickerIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.workspace__pickerIcon .uiIcon { width: 22px; height: 22px; }
+.workspace__pickerName { word-break: break-word; }
+.workspace__pickerEmpty,
+.workspace__pickerLoading {
+  padding: 14px 10px;
+  color: var(--fg-3);
+  font-size: 13px;
+  text-align: center;
+  list-style: none;
+}
+.workspace__picker .workspace__btn {
+  margin: 8px 12px 12px;
+}
+.toolcard__code {
+  /* Embedded code blocks inside tool cards lose the outer margin so they
+     sit flush within the card's padding. */
+  margin: 6px 0 0 0;
+  max-width: 100%;
+}
+.toolcard__code .md-pre__body {
+  max-height: 180px;     /* slightly tighter inside a tool card */
+}
+/* IN/OUT pair on a toolcard: the existing code block (IN — the command
+   or input) plus an OUT block (the tool's result). Both share .md-pre
+   styling with collapse-by-default + expand. The OUT block has a
+   slightly muted tint so the visual hierarchy reads "command, then
+   what came back," not two equally-loud blocks. */
+.toolcard__io--out {
+  margin: 4px 0 0 0;
+  max-width: 100%;
+  background: var(--bg);            /* darker than the IN block's --bg-2 */
+}
+.toolcard__io--out .md-pre__head {
+  background: var(--bg);
+  color: var(--fg-3);
+}
+.toolcard__io--out .md-pre__body {
+  max-height: 180px;
+}
+.toolcard__io--out.toolcard__io--err {
+  border-color: var(--danger);
+}
+.toolcard__io--out.toolcard__io--err .md-pre__head {
+  color: var(--danger);
+}
+
+/* Error variant: warns red when a tool result came back is_error=true. */
+.toolcard--err {
+  border-left-color: var(--danger);
+}
+.toolcard--err .toolcard__head { color: var(--danger); }
+.toolcard--err .toolcard__icon {
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ExitPlanMode approval card. Coral-accented variant of .toolcard with a
+   markdown-rendered plan body and three action buttons (apply-edits,
+   apply-auto, dismiss). The body deliberately overrides .toolcard__detail
+   clamp rules so multi-paragraph plans stay fully visible. */
+.toolcard--plan {
+  border-left-color: var(--accent);
+  border-left-width: 4px;
+}
+.toolcard--plan .toolcard__head { color: var(--accent); }
+.toolcard--plan .toolcard__icon { color: var(--accent); }
+.toolcard__plan-body {
+  max-height: none;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: normal;
+  margin-top: 8px;
+}
+.toolcard__plan-body p,
+.toolcard__plan-body ul,
+.toolcard__plan-body ol { margin: 6px 0; }
+.toolcard__plan-body code { font-family: var(--font-mono); font-size: 12px; }
+.toolcard__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.toolcard__btn {
+  flex: 1 1 auto;
+  min-width: 110px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-3, rgba(255, 255, 255, 0.04));
+  color: var(--fg-1, #f4ede5);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  cursor: pointer;
+  transition: transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1), background 120ms;
+}
+.toolcard__btn:active { transform: scale(0.96); }
+.toolcard__btn--primary {
+  background: var(--accent);
+  color: #1a1614;
+  border-color: var(--accent);
+}
+.toolcard__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+.toolcard--plan[data-decided="1"] .toolcard__btn { opacity: 0.45; }
+
+/* Inline diff block in Edit / Write / NotebookEdit cards. Mirrors the
+   VSCode extension's preview: red bg + `-` sigil for removed lines,
+   green bg + `+` sigil for added lines. Monospace, slightly indented
+   from the file-path detail line above it. Long diffs clamp visually
+   inside the card (own scroll), but we also cap at ~40 lines server-side.
+   diffrow--more is the "+ N more lines" tail when clamped. */
+.toolcard__diff {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  border-radius: 6px;
+  overflow: hidden;       /* clip rounded corners on the row backgrounds */
+  border: 1px solid var(--line);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.diffrow {
+  display: flex;
+  align-items: flex-start;
+  white-space: pre;
+  padding: 0;
+}
+.diffrow__sigil {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.diffrow__text {
+  flex: 1 1 auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding-right: 8px;
+}
+/* Diff colors — coarse-tuned for legibility on both dark and light bg.
+   In dark theme the +/- rows show as muted green/red tints with bright
+   text; in light theme the same alpha values land as soft pastels
+   readable against the cream bg. The sigil character (+ or -) is the
+   --ok / --danger theme variable so it stays on-brand. */
+.diffrow--add { background: rgba(127, 163, 122, 0.18); color: var(--fg); }
+.diffrow--add .diffrow__sigil { color: var(--ok); }
+.diffrow--del { background: rgba(201, 114, 100, 0.18); color: var(--fg); }
+.diffrow--del .diffrow__sigil { color: var(--danger); }
+.diffrow--more {
+  color: var(--fg-3);
+  padding: 4px 10px;
+  font-style: italic;
+  background: var(--bg-3);
+  border-top: 1px solid var(--line);
+}
+
+/* Attachments shown alongside a sent user message — a row positioned
+   ABOVE the bubble (like VSCode's chat input), with a visible
+   thumbnail + filename + dimensions/size pill. The thumbnail is
+   tappable to open the lightbox for the full image. */
+.msg__attachments {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 6px;
+  align-self: flex-end;   /* user messages right-align */
+  max-width: 100%;
+}
+/* Wider, more legible chip used for sent-message attachments. Matches
+   the VSCode chat-input attachment chip: rectangular thumb (not a
+   rounded square), gently rounded chip corners (not pill-shaped),
+   filename + dimensions pill. */
+.chip--attached {
+  max-width: min(100%, 360px);
+  font-size: 13px;
+  padding: 4px 10px 4px 4px;
+  gap: 8px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+}
+.chip--attached.chip--img { padding: 4px 10px 4px 4px; }
+.chip--attached .chip__thumb {
+  width: 40px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--bg-3);
+  flex-shrink: 0;
+}
+/* Text-only fallback shown when an attachment thumb fails to load —
+   instead of iOS's broken-image "?" glyph we show a tiny filetype tag
+   ("GIF", "PNG", …) so the chip still reads as a real attachment. */
+.chip--attached .chip__thumb--fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--fg-2);
+  text-transform: uppercase;
+}
+.chip--attached .chip__name {
+  font-weight: 500;
+  color: var(--fg);
+}
+.chip--attached .chip__size {
+  background: var(--bg-3);
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--fg-3);
+  flex-shrink: 0;
+}
+
+/* Greyed-out chip for attachments whose underlying file is missing
+   on disk (older sessions where auto-cleanup deleted the upload).
+   The chip still surfaces the filename so the user knows what they
+   attached; just no thumbnail. */
+.chip--missing {
+  opacity: 0.55;
+  border-style: dashed;
+}
+.chip--missing .chip__name { font-style: italic; }
+
+/* Per-attachment X button added by edit-mode (_enterMessageEdit) so the
+   user can drop attachments before resending. Sits inline at the right
+   of the chip; clicking toggles .chip--removed which strikes through
+   and dims the chip without yanking it out of the DOM (the save handler
+   reads dataset.removed to compute the final attachments list). */
+.chip__remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--fg-2);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.chip__remove:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-ring); }
+.chip__remove:active { transform: scale(0.92); }
+.chip--removed {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+.chip--removed .chip__remove {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-ring);
+}
+
+/* Media chips inside a message (watcher-emitted images/videos from
+   claude, NOT user attachments — those use .msg__attachments above). */
+.msg__media {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-left: 18px; margin-top: 8px;
+}
+.msg__mediaItem {
+  display: block;
+  border-radius: var(--radius-tile);
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  max-width: 220px;
+}
+.msg__mediaItem img,
+.msg__mediaItem video {
+  display: block; width: 100%; height: auto; max-height: 220px; object-fit: cover;
+}
+.msg__mediaCaption {
+  font-size: 11px; color: var(--fg-3); padding: 6px 8px;
+  font-family: var(--font-mono);
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+/* System message (errors, helpers) */
+.msg--sys .msg__body {
+  border-left-color: var(--line-strong);
+  color: var(--fg-2);
+  font-size: 14px;
+}
+
+/* Pull-to-refresh indicator. Centered at the top, fades + spins as the
+   user pulls. Threshold raised to 150px in ptr.js so this only appears
+   on deliberate pulls. */
+.ptr-indicator {
+  position: fixed;
+  left: 50%;
+  top: calc(20px + var(--safe-top));
+  transform: translate(-50%, 0);
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  color: var(--accent);
+  background: var(--bg-2);
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 25;
+}
+
+/* ─── Composer ──────────────────────────────────────────────────────── */
+
+.composer {
+  /* Just a regular grid item — body is pinned via position:fixed, so
+     the composer's bottom edge IS the screen bottom. */
+  background: var(--bg);
+  padding: 10px 12px calc(2px + var(--safe-bottom));
+  border-top: 1px solid var(--line);
+}
+/* In standalone PWA mode (Add to Home Screen), iOS doesn't draw a URL
+   bar — but env(safe-area-inset-bottom) still returns ~34pt for the
+   home-indicator gesture region. The user explicitly asked for the
+   mode chip + connection status to sit flush against the screen bottom
+   in this mode, accepting that the home-indicator's white line may sit
+   just over the chip. In Safari (browser) the URL bar fills that space
+   already, so the default safe-area padding stays. */
+@media all and (display-mode: standalone) {
+  .composer {
+    /* Flush against the screen bottom in standalone PWA. The home
+       indicator's gesture region still works underneath — iOS catches
+       swipe-up regardless of our content. The user explicitly asked
+       for zero padding so the chip + status sit at the absolute edge. */
+    padding-bottom: 0;
+  }
+}
+
+.composer__attachments {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 8px;
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 7px 5px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  max-width: 85%;
+  /* overflow visible so the close button doesn't get clipped */
+}
+.chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip__size { color: var(--fg-3); }
+.chip__close {
+  /* Per-attachment remove button. Bigger touch target than the
+     desktop default — 28px hit area sits comfortably inside the chip
+     while staying tappable on a phone. The visible glyph is smaller;
+     the rest is padding around it so a slightly off tap still lands. */
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--fg-2);
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 500;
+  margin-left: 6px;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 100ms var(--ease-spring), background 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.chip__close:hover { color: var(--fg); background: var(--accent-soft); border-color: var(--accent-ring); }
+.chip__close:active { transform: scale(0.9); }
+.chip--img { padding: 3px 9px 3px 3px; }
+.chip__thumb { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; }
+
+.composer__row {
+  display: flex; align-items: end; gap: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  padding: 6px;
+  box-shadow: var(--shadow-md);
+  transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.composer__row:focus-within {
+  border-color: var(--accent-ring);
+  box-shadow: var(--shadow-md), 0 0 0 3px var(--accent-soft);
+}
+/* Two-row stacked composer: textarea fills the top row, action buttons
+   live on a thin row beneath separated by a hairline. Mirrors Claude
+   Code's desktop input box — gives the user a wide, rectangular typing
+   surface instead of a narrow pill that gets squeezed by 5 icon
+   buttons sharing the row. */
+.composer__row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 18px;
+  padding: 10px 12px 8px;
+}
+.composer__row--stacked .composer__inputWrap {
+  width: 100%;
+  padding: 2px 2px 4px;
+}
+.composer__row--stacked .composer__input {
+  /* A few comfortable lines visible before the autoresize kicks in. */
+  min-height: 36px;
+}
+.composer__controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.composer__spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer__icon {
+  flex: 0 0 36px;
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--fg-2);
+  border-radius: var(--radius-pill);
+  align-self: flex-end;
+}
+.composer__icon:hover { background: var(--bg-3); color: var(--fg); }
+
+/* Composer-row stop-reading pill. Shown while TTS playback is in
+   flight (TTS._beginPlayback unhides; _reset hides). Coral-tinted so
+   it reads as an active "stop" affordance and stands apart from the
+   neutral mic + send buttons. The pulse mirrors the inline Speak
+   button's speaking state for visual consistency. */
+.composer__ttsStop {
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: msgSpeakingPulse 1.6s ease-in-out infinite;
+}
+.composer__ttsStop:hover { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.composer__ttsStop:active { transform: scale(0.94); }
+
+.composer__inputWrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+}
+.composer__input {
+  width: 100%;
+  border: none; outline: none;
+  background: transparent;
+  resize: none;
+  max-height: 40vh;
+  min-height: 24px;
+  line-height: 1.4;
+  color: var(--fg);
+  font-family: var(--font-body);
+  /* keep 16px to avoid iOS auto-zoom */
+  font-size: 16px;
+}
+.composer__input::placeholder { color: var(--fg-3); }
+
+.composer__mic[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.composer__send {
+  flex: 0 0 38px;
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius-pill);
+  align-self: flex-end;
+  box-shadow: 0 4px 12px rgba(14,110,110,.35);
+  transition: background 160ms var(--ease-out), transform 100ms var(--ease-spring);
+  /* Eliminate iOS double-tap-zoom delay AND prevent the touch from being
+     interpreted as a pan gesture that would scroll the page. Pair with the
+     pointerdown/pointerup handlers in app.js so the first tap fires the
+     action even while the soft keyboard is up. */
+  touch-action: manipulation;
+}
+/* SVG icons inside the button must not steal the touch — pointerdown /
+   pointerup listeners are bound to the button itself, and if e.target is a
+   child SVG path the dedupe + focus-retain logic still works, but disabling
+   pointer events on the children makes the chain unambiguous. */
+.composer__send > svg,
+.composer__send > svg * { pointer-events: none; }
+.composer__send:hover { background: var(--accent-2); }
+.composer__send:disabled {
+  background: var(--bg-3); color: var(--fg-3);
+  cursor: default; box-shadow: none;
+}
+/* Stop-mode: the send button when the active project has a running claude.
+   Same orange as send (so it doesn't look like a different button), just
+   swaps the up-arrow glyph for a solid white square. Matches the VSCode
+   extension's stop affordance. */
+.composer__send__stopIcon,
+.composer__send__queueIcon { display: none; }
+.composer__send--stop .composer__send__sendIcon,
+.composer__send--queue .composer__send__sendIcon { display: none; }
+.composer__send--stop .composer__send__stopIcon {
+  display: block;
+  color: #fff;
+  /* Bumped from 16×16 → 22×22 so the white square is unmistakable inside
+     the 38px orange pill. Matches the "stop" affordance more visibly when
+     a run is in flight. */
+  width: 22px; height: 22px;
+}
+/* Queue mode: running + composer-has-text. Same orange pill (so the
+   button still reads as the primary action), but the icon is the
+   queue-stack arrow. Background nudged slightly translucent so users
+   can tell the action is "ride on top of the queue" rather than the
+   fire-immediately send. */
+.composer__send--queue {
+  background: var(--accent-2);
+}
+.composer__send--queue .composer__send__queueIcon {
+  display: block;
+  color: #fff;
+}
+
+.composer__meta {
+  /* Only the mode + model chips live here. Spread across the composer's
+     full width so the row reads as a balanced two-pill layout rather
+     than two pills crowding the left edge. `flex: 1 1 0` on each chip
+     (see .modechip below) plus `justify-content: stretch` here lets
+     each chip claim half the available width with the gap in between. */
+  display: flex; align-items: stretch;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 0 4px;
+}
+/* Legacy wrapper — emptied. Both the donut and conn status moved out
+   in 20260513ba; keep the rule so any stale DOM doesn't render the
+   shell. */
+.composer__metaRight { display: none; }
+
+/* Token-usage donut. Modeled on the VSCode Claude Code extension's
+   context indicator: small ring filled by the current % of the 200k
+   context window. Hidden until the first usage frame arrives. Tap to
+   see the absolute token numbers as a toast. */
+.usageDonut {
+  position: relative;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; padding: 0;
+  cursor: pointer;
+}
+.usageDonut svg {
+  width: 100%; height: 100%;
+  transform: rotate(-90deg);    /* 0% starts at 12 o'clock */
+}
+.usageDonut__bg {
+  fill: none;
+  stroke: var(--bg-3);
+  stroke-width: 4;
+}
+.usageDonut__fg {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+  transition: stroke-dasharray 320ms var(--ease-out), stroke 160ms var(--ease-out);
+}
+.usageDonut[data-warn="true"] .usageDonut__fg {
+  stroke: var(--warn);
+}
+.usageDonut[data-danger="true"] .usageDonut__fg {
+  stroke: var(--danger);
+}
+/* Donut variant rendered as a composer__icon — sits inline inside the
+   composer pill alongside +, /, mic, send. The button is the same
+   36×36 icon-button footprint; the SVG ring renders at 22px inside. The
+   inline percentage label is hidden in this variant (too small to read
+   at this size); tap to see absolute numbers via toast. */
+.composer__icon--donut.usageDonut {
+  flex: 0 0 36px;
+  width: 36px; height: 36px;
+  border-radius: var(--radius-pill);
+  padding: 7px;        /* 36 - 7*2 = 22px inner ring */
+  align-self: flex-end;
+}
+.composer__icon--donut.usageDonut:hover { background: var(--bg-3); }
+.composer__icon--donut.usageDonut .usageDonut__pct {
+  display: none;
+}
+/* Build-version footer at the bottom of the ⋯ menu. Subtle, mono,
+   non-interactive. Replaces the old composer__buildTag that crowded
+   the status row at the bottom of the screen. */
+.menuList__version, .menuList__status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-3);
+  text-align: center;
+  padding: 8px 14px !important;
+  cursor: default !important;
+  background: transparent !important;
+  pointer-events: none;
+}
+.menuList__version:hover, .menuList__status:hover {
+  background: transparent !important;
+}
+.menuList__version { padding-top: 10px !important; padding-bottom: 6px !important; }
+.menuList__status { padding-top: 12px !important; padding-bottom: 4px !important; }
+.menuList__status[data-state="connected"] { color: var(--ok); }
+.menuList__status[data-state="connecting"] { color: var(--warn); }
+.menuList__status[data-state="disconnected"] { color: var(--danger); }
+
+.staleBanner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(80px + var(--safe-bottom));
+  transform: translateX(-50%);
+  z-index: 60;
+  display: inline-flex; align-items: center; gap: 10px;
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 12px 8px 14px;
+  border-radius: var(--radius-pill);
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  font-size: 13px;
+  font-weight: 500;
+  animation: fadeUp 240ms var(--ease-out) both;
+}
+.staleBanner button {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.staleBanner button:hover { background: rgba(255,255,255,0.28); }
+
+.usageDonut__pct {
+  /* Tiny percent inside the donut, only visible if there's enough room.
+     Hidden below ~24px diameter; we keep the donut to 22px so this
+     stays invisible unless the user zooms. The visual cue is the arc. */
+  position: absolute;
+  font-size: 8px;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  pointer-events: none;
+  display: none;
+}
+
+.modechip {
+  /* The two chips share one row that spans the composer's full width.
+     The mode (permissions + effort) chip carries two pieces of info and
+     gets the lion's share: flex:1 grows freely. The model chip carries
+     a short label ("Auto"), so it's sized to its content via the
+     .modechip--model override below — the rest of the row goes to mode. */
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 500;
+  /* Truncate long labels (e.g. "Sonnet 4.6 · ⚠ Haiku 4.5" when the
+     server's resolved model disagrees with the user's pick) instead
+     of growing the chip and pushing the layout. */
+  white-space: nowrap;
+  overflow: hidden;
+}
+.modechip--model,
+.modechip--agent {
+  /* Shrink to fit content — the mode chip on the left fills the rest. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.modechip__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.modechip:hover { color: var(--fg); }
+.modechip__icon { display: inline-flex; align-items: center; color: var(--accent); flex-shrink: 0; }
+
+.composer__status {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-3);
+}
+.composer__status[data-state="open"]      { color: var(--ok); }
+.composer__status[data-state="connecting"]{ color: var(--warn); }
+.composer__status[data-state="closed"]    { color: var(--danger); }
+
+/* ─── Sessions drawer (left side) ─────────────────────────────────────
+   Modeled on the VS Code Claude Code extension's "Sessions" panel: a
+   slide-in column of past Claude conversations, newest first, with a
+   one-line preview of the first user message. Tapping a row resumes
+   that session as a new tab. Hamburger button (top-left of topbar)
+   opens it; tap backdrop / swipe to close. */
+.drawer {
+  position: fixed; inset: 0; z-index: 35;
+  display: flex;
+  pointer-events: auto;
+}
+.drawer__backdrop {
+  position: absolute; inset: 0;
+  background: rgba(8,6,5,.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fadeIn 180ms var(--ease-out) both;
+}
+.drawer__panel {
+  /* Was background: var(--bg-1) — but --bg-1 was never defined, so the
+     panel fell back to transparent and looked OK in dark mode only by
+     coincidence (the dark backdrop overlay tinted the visible chrome).
+     Fixed to use --bg-2 so both themes get the correct elevated-surface
+     color: warm dark in dark mode, warm cream in light mode. */
+  position: relative;
+  width: min(340px, 86vw);
+  height: 100dvh;
+  background: var(--bg-2);
+  border-right: 1px solid var(--line-strong);
+  display: flex; flex-direction: column;
+  box-shadow: 8px 0 28px rgba(0,0,0,.45);
+  animation: drawerSlideIn 220ms var(--ease-out) both;
+  padding-top: var(--safe-top);
+}
+@keyframes drawerSlideIn {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+.drawer__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 14px 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.drawer__title {
+  font-size: 13px; font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-2);
+}
+.drawer__headActions {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.drawer__closeBtn, .drawer__refreshBtn, .drawer__editBtn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--fg-2);
+  font-size: 22px; line-height: 1;
+  border-radius: 50%;
+}
+.drawer__closeBtn:hover, .drawer__refreshBtn:hover, .drawer__editBtn:hover {
+  color: var(--fg); background: var(--bg-3);
+}
+.drawer__editBtn[data-active="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Select mode — each row gets a checkbox circle on the left. Tap row to
+   toggle. Tapping does NOT open the session in this mode (would be
+   ambiguous). Exiting select mode restores the normal "tap to resume"
+   behavior. */
+.drawer__list.is-selecting li {
+  padding-left: 6px;
+}
+.drawer__checkbox {
+  display: none;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-3);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+}
+.drawer__list.is-selecting .drawer__checkbox {
+  display: inline-flex;
+}
+.drawer__list.is-selecting .drawer__rowTop {
+  gap: 10px;
+}
+.drawer__list.is-selecting .drawer__rowDot {
+  display: none;     /* Replace the orange dot with the checkbox. */
+}
+.drawer__list.is-selecting li[data-selected="true"] .drawer__checkbox {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.drawer__checkbox svg {
+  width: 12px; height: 12px;
+}
+
+.drawer__footer {
+  border-top: 1px solid var(--line-strong);
+  padding: 10px 12px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  background: var(--bg-2);
+}
+.drawer__footerCount {
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.drawer__footerBtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 13px; font-weight: 500;
+  color: var(--fg-2);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+}
+.drawer__footerBtn:hover { color: var(--fg); }
+.drawer__footerBtn--danger {
+  color: var(--danger);
+  border-color: rgba(201, 114, 100, 0.4);
+}
+.drawer__footerBtn--danger:not(:disabled):hover {
+  background: rgba(201, 114, 100, 0.15);
+  color: var(--danger);
+}
+.drawer__footerBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.drawer__hint {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.drawer__scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 6px 8px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+.drawer__list {
+  list-style: none; padding: 0; margin: 0;
+}
+.drawer__list li {
+  padding: 10px 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: background 120ms var(--ease-out);
+}
+.drawer__list li:hover { background: var(--bg-2); }
+.drawer__list li:active { background: var(--bg-3); }
+.drawer__rowTop {
+  display: flex; align-items: center; gap: 8px;
+}
+.drawer__rowDot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.drawer__rowPreview {
+  font-size: 14px; color: var(--fg);
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.drawer__rowMeta {
+  font-size: 11px;
+  color: var(--fg-3);
+  margin-left: 14px;   /* align with text past the dot */
+  display: flex; gap: 8px;
+}
+.drawer__rowMeta--project {
+  color: var(--accent);
+}
+/* "Active" badge on the most-recently-modified session of each project
+   — that's the chat your VSCode / terminal / mobile is actively writing
+   to. Helps the user pick the right row when they want to see their
+   live conversation here. */
+.drawer__rowMeta--active {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.drawer__list li[data-active-session="true"] {
+  background: var(--bg-2);
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+.drawer__empty {
+  color: var(--fg-3);
+  text-align: center;
+  padding: 32px 16px;
+  font-size: 13px;
+  cursor: default !important;
+}
+.drawer__empty:hover { background: transparent !important; }
+
+/* ─── Bottom sheets ─────────────────────────────────────────────────── */
+
+.sheet {
+  position: fixed; inset: 0; z-index: 30;
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet__backdrop {
+  position: absolute; inset: 0;
+  background: rgba(8,6,5,.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fadeIn 180ms var(--ease-out) both;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.sheet__panel {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  max-height: 78dvh;
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-bottom: none;
+  border-radius: 22px 22px 0 0;
+  padding: 6px 14px calc(16px + var(--safe-bottom));
+  box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column;
+  animation: slideUp 240ms var(--ease-spring) both;
+  /* CRITICAL: do NOT set `touch-action: none` here. Verified by
+     comparing to the basketil project's working drag (vanilla React,
+     no library). iOS Safari in PWA standalone mode treats
+     `touch-action: none` as "this element handles nothing" and stops
+     dispatching touchmove events to JS — exactly the opposite of
+     what MDN docs suggest. The fix is to leave touch-action at its
+     default and instead call `e.preventDefault()` inside the
+     `touchmove` handler (which requires `passive: false` on the
+     listener) — that tells iOS to back off per-event without
+     pre-committing the whole gesture interpretation.
+     Force a GPU compositing layer so transform updates apply per
+     frame instead of waiting for layout/paint. */
+  will-change: transform;
+}
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: none; } }
+/* Drag handle — full-width tap target with a visible bar inside. Drag down
+   to dismiss, or tap to dismiss (both wired in JS). The tap target is much
+   bigger than the visible bar so a sloppy finger still catches it. */
+.sheet__handle {
+  width: 100%; height: 28px;
+  background: transparent;
+  border: none; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  cursor: grab;
+  touch-action: none;
+  position: relative;
+}
+.sheet__handle:active { cursor: grabbing; }
+.sheet__handle::before {
+  content: '';
+  display: block;
+  width: 44px; height: 5px;
+  background: var(--bg-4);
+  border-radius: var(--radius-pill);
+  transition: background 120ms var(--ease-out), width 120ms var(--ease-out);
+}
+.sheet__handle:hover::before, .sheet__handle:active::before {
+  background: var(--fg-3); width: 56px;
+}
+
+/* Title row: title left, big × close button right — leaves no doubt. */
+.sheet__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  padding: 4px 4px 12px;
+}
+.sheet__title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.sheet__closeBtn,
+.sheet__backBtn {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--bg-3);
+  color: var(--fg-2);
+  font-size: 22px;
+  line-height: 1;
+  flex-shrink: 0;
+  border: 1px solid var(--line-strong);
+}
+.sheet__closeBtn:hover, .sheet__closeBtn:active,
+.sheet__backBtn:hover, .sheet__backBtn:active {
+  background: var(--bg-4);
+  color: var(--fg);
+}
+/* Back button visually sits on the LEFT of the sheet head, opposite the
+   close button. Toggled with `hidden` from JS — only sheets opened FROM
+   the menu render it; sheets opened directly from the topbar/compose
+   keep it hidden so they don't grow a back affordance to nowhere.
+   margin-right:auto keeps the title centred between back and close. */
+.sheet__backBtn {
+  font-size: 24px;
+  margin-right: auto;
+}
+
+.sheet__list {
+  list-style: none; margin: 0; padding: 0;
+  overflow-y: auto; max-height: 60dvh;
+  scrollbar-width: thin;
+}
+/* Variant used when the sheet wraps everything in a single .sheet__scroll
+   container — kills the inner max-height so there's only ONE scrollbar. */
+.sheet__list--flat { overflow: visible; max-height: none; }
+.sheet__scroll {
+  overflow-y: auto;
+  max-height: 65dvh;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  /* Opt back in to vertical pan so the list inside the sheet can still
+     be scrolled — the parent .sheet__panel sets touch-action: none to
+     own the drag-to-close gesture. */
+  touch-action: pan-y;
+}
+/* Bare lists (no .sheet__scroll wrapper) intentionally inherit the
+   panel's `touch-action: none` so the drag-to-close gesture works.
+   They're short — menuList, plusList, newTabList, etc. — so they
+   don't need their own scroll. */
+.sheet__list li {
+  padding: 14px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  margin-bottom: 8px;
+  transition: background 120ms var(--ease-out), transform 80ms var(--ease-spring);
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet__list li:last-child { margin-bottom: 0; }
+.sheet__list li:hover { background: var(--bg-4); }
+/* :active = the moment your finger is down on the item. Big, obvious. */
+.sheet__list li:active {
+  background: var(--accent-soft);
+  transform: scale(0.98);
+}
+.sheet__list li[aria-selected="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+}
+.sheet__optTitle { font-weight: 600; color: var(--fg); font-size: 16px; }
+
+/* "Browse other folders…" row at the bottom of the project picker — a
+   visually distinct affordance so it doesn't blend in with project names.
+   Solid accent border + soft accent tint signals "this is a different
+   kind of action than picking a project." */
+.sheet__list li.projectList__browse {
+  margin-top: 14px;
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+}
+.sheet__list li.projectList__browse .sheet__optTitle { color: var(--accent); }
+
+/* Bumped from --fg-3 to --fg-2 — descriptions were nearly invisible against
+   the warm-dark background. */
+.sheet__optDesc  { color: var(--fg-2); font-size: 13px; margin-top: 3px; line-height: 1.4; }
+.sheet__optMeta  { color: var(--fg-3); font-size: 11px; font-family: var(--font-mono); margin-top: 2px; }
+
+/* Sheet-row right-side action button (used by /mcp list rows for the
+   per-server Remove button). Keeps the row tappable to the description
+   on the left while giving the action a clear hit target on the right. */
+.sheet__list li[data-mcp] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: default;
+}
+.sheet__list li[data-mcp] > div:first-child { flex: 1 1 auto; min-width: 0; }
+.sheet__list li[data-mcp]:hover { background: var(--bg-3); }
+.sheet__list li[data-mcp]:active { transform: none; background: var(--bg-3); }
+.sheet__rowAction {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.sheet__rowAction:hover { color: var(--fg); }
+.sheet__rowAction:active { background: var(--accent-soft); }
+.sheet__rowAction:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Inline-form section inside a sheet (used by /mcp add). Each labeled
+   field stacks vertically, the primary button takes the row width. */
+.sheet__section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.sheet__sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+}
+.sheet__form { display: flex; flex-direction: column; gap: 10px; }
+.sheet__field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.sheet__fieldLabel { color: var(--fg-2); font-size: 12px; font-weight: 500; }
+.sheet__field input,
+.sheet__field select,
+.sheet__field textarea {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  font-family: inherit;
+}
+.sheet__field textarea {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.5;
+}
+.sheet__field input:focus,
+.sheet__field select:focus,
+.sheet__field textarea:focus {
+  outline: none;
+  border-color: var(--accent-ring);
+  background: var(--bg-2);
+}
+
+/* /agents admin list rows: name on the left, Edit/Delete actions on right. */
+.sheet__list li[data-agent-row] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+.sheet__list li[data-agent-row] > div:first-child { flex: 1 1 auto; min-width: 0; }
+.sheet__list li[data-agent-row]:hover { background: var(--bg-3); }
+.sheet__list li[data-agent-row]:active { transform: none; background: var(--bg-3); }
+.sheet__primaryBtn {
+  margin-top: 4px;
+  padding: 12px 16px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet__primaryBtn:active { transform: scale(0.97); }
+.sheet__formStatus {
+  font-size: 13px;
+  color: var(--fg-2);
+  padding: 8px 12px;
+  background: var(--bg-3);
+  border-radius: 8px;
+}
+.sheet__hint {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--fg-3);
+  line-height: 1.5;
+}
+.sheet__hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-3);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* Sheet rows that carry an iOS-style switch on the right — currently
+   just the theme toggle in the Menu sheet. Two-column flex with the
+   label stack pushed left and the switch pinned right. */
+.sheet__list li.sheet__optWithToggle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.sheet__optMain { flex: 1 1 auto; min-width: 0; }
+
+/* iOS-style toggle switch. Coral accent when on, neutral bg when off.
+   Spring transition on the thumb so the tap feels confident. */
+.toggle {
+  flex-shrink: 0;
+  width: 52px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--bg-4);
+  border: 1px solid var(--line-strong, var(--line));
+  position: relative;
+  cursor: pointer;
+  transition: background 180ms var(--ease-out), border-color 180ms var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+.toggle__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--fg);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.25);
+  transition: transform 220ms var(--ease-spring), background 180ms var(--ease-out);
+}
+.toggle[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.toggle[aria-checked="true"] .toggle__thumb {
+  transform: translateX(20px);
+  background: #fff;
+}
+/* Toggle row's :active state shouldn't scale the whole row (the row
+   itself is the click target); just give the thumb a quick squish so
+   the user feels the press. */
+.sheet__list li.sheet__optWithToggle:active { transform: none; background: var(--bg-3); }
+.sheet__list li.sheet__optWithToggle:active .toggle__thumb { transform: scale(0.94); }
+.sheet__list li.sheet__optWithToggle[data-action="theme"]:active .toggle[aria-checked="true"] .toggle__thumb {
+  transform: translateX(20px) scale(0.94);
+}
+
+/* Single-field "prompt" sheets — Add context + Browse the web. */
+.sheet__form { display: flex; flex-direction: column; gap: 10px; padding: 4px 4px 8px; }
+.sheet__label { font-size: 13px; color: var(--fg-2); padding: 0 2px; }
+.sheet__input {
+  height: 46px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-3);
+  border: 1px solid var(--line-strong);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  width: 100%;
+}
+.sheet__input:focus { outline: none; border-color: var(--accent-ring); box-shadow: 0 0 0 3px var(--accent-soft); }
+.sheet__submit {
+  height: 46px;
+  border-radius: var(--radius-pill);
+  background: var(--accent); color: #fff; font-weight: 600; font-size: 15px;
+}
+.sheet__submit:hover { background: var(--accent-2); }
+
+/* Second titled section inside a sheet (Effort picker under Modes). */
+.sheet__section { margin-top: 18px; }
+.sheet__sectionLabel {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 4px 10px;
+}
+.sheet__sectionValue {
+  font-size: 14px;
+  color: var(--fg);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.sheet__sectionLabel--inline {
+  padding-top: 14px;
+}
+
+/* Mode list — compact rows so all 5 modes fit on screen without scrolling.
+   Each row: small icon tile + title/description block. Matches the
+   VSCode extension's "Modes" menu. */
+.sheet__list--modes li {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+}
+.sheet__list--modes li:last-child { margin-bottom: 0; }
+.sheet__optIcon {
+  width: 36px; height: 36px;
+  flex: 0 0 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 10px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+}
+/* Model picker tile: always neutral background so the coral icon glyph
+   inside it has contrast. Without this, the selected-row's coral tint
+   (.sheet__list--modes li[aria-selected="true"]) combined with the
+   default coral-soft tile made the whole tile blend into the row and
+   the icon disappeared into a uniform orange square. */
+.sheet__list--modes .sheet__optIcon {
+  background: var(--bg-3) !important;
+  border-color: var(--line-strong) !important;
+  color: var(--accent);
+}
+/* Even on the selected row, force the icon tile to stay neutral — the
+   row's outer coral border + soft background already signals selection.
+   The icon shouldn't compete with that signal. */
+.sheet__list--modes li[aria-selected="true"] .sheet__optIcon {
+  background: var(--bg-2) !important;
+  border-color: var(--accent-ring) !important;
+}
+.sheet__list--modes .sheet__optTitle { font-size: 15px; }
+.sheet__list--modes .sheet__optDesc  { font-size: 12px; margin-top: 1px; }
+.sheet__list--modes li[aria-selected="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+/* Selected-row icon tile: keep the icon glyph CORAL (the row's outer
+   coral border already signals selection). The previous rule here set
+   color:#fff which made the selected SVG glyph render solid white on a
+   coral tile — exactly the "orange square" the user reported.
+   Now: same neutral tile as the unselected variant, coral icon stays
+   visible. The earlier rule at .sheet__list--modes .sheet__optIcon
+   already handles this — repeating with !important defends against
+   any other selector accidentally winning the cascade. */
+.sheet__list--modes li[aria-selected="true"] .sheet__optIcon {
+  background: var(--bg-2) !important;
+  border-color: var(--accent-ring) !important;
+  color: var(--accent) !important;
+}
+
+/* Compact "Effort" row at the bottom of the modes sheet. Matches the VSCode
+   extension: leading icon + label + 5 small dots on the right edge. Tap a
+   dot or drag across the row to set. NO big track, no labels under each
+   dot — labels would be redundant with the inline value text. */
+.effortRow {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-top: 10px;
+  border-radius: 14px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.effortRow__label {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--fg);
+  font-size: 15px; font-weight: 500;
+}
+.effortRow__label svg { color: var(--fg-2); }
+.effortRow__value {
+  color: var(--fg-3);
+  font-size: 13px;
+  font-weight: 400;
+  margin-left: 2px;
+}
+.effortRow__dots {
+  display: inline-flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.effortRow__dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--bg-4);
+  border: none;
+  flex-shrink: 0;
+  transition: transform 140ms var(--ease-spring), background 140ms;
+  cursor: pointer;
+  padding: 0;
+}
+.effortRow__dot:hover { transform: scale(1.25); background: var(--fg-3); }
+.effortRow__dot[data-passed]:not([data-active]) {
+  background: var(--fg-2);
+}
+.effortRow__dot[data-active] {
+  background: var(--accent);
+  transform: scale(1.55);
+  box-shadow: 0 0 0 3px rgba(14,110,110,.18);
+}
+
+/* ─── Slash command autocomplete ──────────────────────────────────────
+   Shown above the input bar as soon as the user types `/`. Each row is a
+   matching command; tapping inserts the slash command text. */
+.autocomplete {
+  position: absolute;
+  bottom: 100%;
+  left: 8px; right: 8px;
+  margin-bottom: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  max-height: 240px;
+  overflow-y: auto;
+  /* Bumped from 4 to 50 so the inline slash autocomplete renders above
+     toasts, the jump-to-bottom button, and any tool-card overflows that
+     might sit at a higher stacking context — previously on iOS the
+     popover was rendered but tucked behind nearby surfaces. */
+  z-index: 50;
+}
+.composer { position: relative; }
+.autocomplete__item {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  -webkit-tap-highlight-color: transparent;
+}
+.autocomplete__item:last-child { border-bottom: none; }
+.autocomplete__item:hover,
+.autocomplete__item[data-active] {
+  background: var(--bg-3);
+}
+.autocomplete__cmd {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.autocomplete__desc {
+  color: var(--fg-2);
+  font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.autocomplete__kind {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  flex-shrink: 0;
+}
+
+/* ─── Inline audio-level bars + mic active state ──────────────────────
+   While dictating: the mic icon goes solid VSCode-blue (matches the
+   "Stop recording" button style from the extension), and animated blue
+   level bars sit to its left. */
+:root {
+  --mic-blue: #0a84ff;             /* iOS / VSCode "info" blue */
+  --mic-blue-soft: rgba(10, 132, 255, 0.18);
+}
+.composer__level {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 3px;
+  align-self: flex-end;
+  height: 36px;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+.composer__level span {
+  width: 3px;
+  background: var(--mic-blue);
+  border-radius: 999px;
+  height: var(--bar-h, 30%);
+  min-height: 6px;
+  transition: height 80ms linear;
+}
+/* When recording, swap the mic button to a solid blue filled state. */
+.composer__mic[aria-pressed="true"] {
+  color: #fff;
+  background: var(--mic-blue);
+  position: relative;
+}
+.composer__mic[aria-pressed="true"]:hover {
+  background: var(--mic-blue);
+  filter: brightness(1.08);
+}
+/* "Transcribing…" — the user has stopped recording and we're waiting on
+   the Whisper round-trip. Pulse the icon so they know something's still
+   happening; ignore taps until the response lands. */
+.composer__mic[aria-busy="true"] {
+  color: var(--accent);
+  animation: micPulse 1100ms ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes micPulse {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: 1;   }
+}
+
+/* ─── Lightbox ──────────────────────────────────────────────────────── */
+
+.lightbox {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(8,6,5,.92);
+  display: flex; align-items: center; justify-content: center;
+  /* Respect the iPhone notch / Dynamic Island and the home-indicator
+     bar: the image is centered INSIDE the safe area instead of
+     stretched edge-to-edge. Without the top padding the image's top
+     row of pixels sat under the notch and looked clipped — reported
+     2026-05-17. The extra 56px of top padding leaves space for the
+     close button (which is absolute-positioned at 14px + safe-top so
+     it can't collide with the image). box-sizing makes the padding
+     subtract from the flex container instead of overflowing it. */
+  padding: calc(56px + var(--safe-top)) 0 calc(24px + var(--safe-bottom));
+  box-sizing: border-box;
+  animation: fadeIn 180ms var(--ease-out) both;
+}
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  /* The page viewport is pinned (maximum-scale=1) so iOS doesn't zoom
+     the whole UI. We implement pinch / double-tap / pan ourselves in
+     JS — see _setupLightboxZoom in app.js. touch-action:none here lets
+     us preventDefault on touchmove without iOS fighting back. The
+     transform transition is managed from JS too (none during pinch /
+     pan for 1:1 finger tracking, ease for double-tap toggles); the
+     `:active` pseudo-class wasn't reliable enough on iOS Safari. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  transform-origin: center center;
+  will-change: transform;
+}
+.lightbox__close {
+  position: absolute; top: calc(14px + var(--safe-top)); right: 14px;
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  /* Solid bg + thin border so it's unambiguously a tappable button
+     against any image. Was 8% white over the dim backdrop — barely
+     visible if the image had bright pixels behind the corner. */
+  background: rgba(20,16,14,0.88);
+  border: 1.5px solid rgba(255,255,255,0.32);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  z-index: 2;
+  /* Subtle drop shadow so it lifts off the image. */
+  box-shadow: 0 4px 12px rgba(0,0,0,0.45), 0 12px 28px rgba(0,0,0,0.32);
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms var(--ease-out), transform 80ms var(--ease-spring);
+}
+.lightbox__close:hover { background: rgba(30,24,22,1); }
+.lightbox__close:active { transform: scale(0.92); }
+
+/* ─── Toast ─────────────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(86px + var(--safe-bottom));
+  z-index: 40;
+  background: var(--bg-3);
+  color: var(--fg);
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--line-strong);
+  animation: slideUp 240ms var(--ease-spring) both;
+}
+
+/* ─── Login page ────────────────────────────────────────────────────── */
+
+body.login {
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  min-height: 100dvh;
+}
+.login__card {
+  width: 100%; max-width: 360px;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  padding: 32px 24px;
+  box-shadow: var(--shadow-lg);
+}
+.login__logo { color: var(--accent); margin-bottom: 12px; }
+.login__title { margin: 0 0 8px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.login__hint { margin: 0 0 18px; color: var(--fg-3); font-size: 13px; }
+.login__hint code { font-family: var(--font-mono); font-size: 12px; background: var(--bg-3); padding: 1px 6px; border-radius: 4px; }
+.login__form { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+
+/* Wrap holds the input + reveal-eye button so they share a focus ring. */
+.login__pwWrap {
+  position: relative;
+  display: flex; align-items: center;
+}
+.login__input {
+  width: 100%;
+  height: 48px;
+  padding: 0 48px 0 16px;   /* right padding leaves room for the eye button */
+  border-radius: var(--radius-pill);
+  background: var(--bg-3);
+  border: 1px solid var(--line-strong);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  /* When typing into a password field, browsers render ••• with default
+     spacing — visually cramped. Bump letter-spacing so each dot is clearly
+     separable. Safari ignores this in some versions; the larger font size +
+     mono family also help. */
+  letter-spacing: 0.18em;
+}
+.login__pwWrap:focus-within {
+  border-radius: var(--radius-pill);
+}
+.login__input:focus { outline: none; border-color: var(--accent-ring); box-shadow: 0 0 0 3px var(--accent-soft); }
+.login__pwToggle {
+  position: absolute;
+  right: 6px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  color: var(--fg-2);
+  background: transparent;
+}
+.login__pwToggle:hover { color: var(--fg); background: var(--bg-4); }
+.login__pwToggle[aria-pressed="true"] { color: var(--accent); }
+.login__submit {
+  height: 44px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.login__submit:hover { background: var(--accent-2); }
+.login__faceid {
+  height: 44px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-2);
+  border: 1px solid var(--line-strong);
+  font-weight: 500;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.login__faceid:hover { color: var(--fg); background: var(--bg-3); }
+.login__err {
+  color: var(--danger);
+  font-size: 13px;
+  padding: 6px 12px;
+  background: rgba(201,114,100,.08);
+  border-radius: 12px;
+  border: 1px solid rgba(201,114,100,.25);
+}
+
+/* Pull-to-refresh indicator: a circular arrow that fades in + rotates as
+   the user drags down on the chat surface. Replaces Safari's native PTR,
+   which is disabled in standalone PWA mode. */
+.pullIndicator {
+  position: fixed;
+  top: calc(56px + var(--safe-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-md);
+  color: var(--accent);
+  pointer-events: none;
+  z-index: 6;
+}
+
+/* ─── Reduced motion ────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ─── In-DOM splash overlay ──────────────────────────────────────────
+   Pixel-art mirror-reveal animation shown until the WebSocket is OPEN
+   + initial state is rendered. Theme-aware via --bg / --accent. The
+   per-rect opacity is driven by app.js (rAF loop, ~60fps).
+
+   Visible from first paint (no `hidden` attribute at HTML level), so
+   there is never a flash of unstyled content. JS sets `data-state` to
+   "dismiss" once the app is ready, which triggers the opacity fade-
+   out below, then sets `hidden` to remove from the layer tree. */
+.splashfx {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  /* Same fade timing as the toast / sheet overlays for consistency. */
+  transition: opacity 280ms var(--ease-out);
+  opacity: 1;
+  /* Belt + braces: even if app.css races the splash markup, the
+     viewport-filling overlay prevents the user from seeing the bare
+     index.html mid-load. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+}
+.splashfx[data-state="dismiss"] {
+  opacity: 0;
+  pointer-events: none;
+}
+.splashfx__stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* No flex gap — the GIF carries its own internal padding around the
+     bridge + kawaii art, so the visual gap to the wordmark is already
+     present in the asset. A negative margin on .splashfx__loopGif
+     tightens it further if needed. */
+  gap: 0;
+  padding: 24px;
+  max-width: 460px;
+  width: 100%;
+}
+/* ─── Bridgy splash composition (animated GIF) ───────────────────────
+   <img class="splashfx__loopGif"> backed by /icons/bridgy_loading.gif
+   (built by tools/build_bridgy_loading_gif.py — 9 frames, 2.3s per
+   cycle, loops). The browser handles playback so there's no CSS
+   keyframe choreography to maintain. The Bridgy wordmark fades in
+   below at frame 6 (the jump) so the brand resolves as the kawaii
+   bounces into place. */
+.splashfx__loopGif {
+  /* Bigger than the wordmark below — the GIF canvas includes padding
+     around the bridge + kawaii, so the visible art is only ~60% of the
+     canvas width. Sizing it larger lines the visible bridge up
+     proportionally with the Bridgy wordmark. */
+  width: min(92vw, 440px);
+  aspect-ratio: 1;
+  height: auto;
+  margin-bottom: -40px;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none;
+}
+.splashfx__wordmarkBridgy {
+  width: min(70vw, 320px);
+  height: auto;
+  margin-top: 4px;
+  /* Above everything so the wordmark isn't masked by anything. */
+  z-index: 4;
+  position: relative;
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none;
+  opacity: 0;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  /* Wordmark fades in the moment the kawaii starts to jump on the
+     bridge — frame 6 of the GIF, which begins ~1450ms in (frame
+     timings: 450,200,200,200,200,200,200,200,450 → 2300ms total
+     per cycle). 1450ms delay with a 400ms fade lands the brand
+     fully visible by ~1850ms, ~450ms of "kawaii landed + brand
+     readable" before the 2300ms min-visible dismiss. */
+  animation: bridgyWordmarkIn 400ms 1450ms var(--ease-out, ease-out) both;
+}
+@keyframes bridgyWordmarkIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Skip the wordmark fade. The GIF itself respects iOS Safari's
+     OS-level Reduce Motion preference — animated GIFs freeze on the
+     first frame when Reduce Motion is on — so no extra rule needed
+     for the loop image. */
+  .splashfx__wordmarkBridgy {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
