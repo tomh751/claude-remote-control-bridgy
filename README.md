@@ -94,6 +94,22 @@ missing prerequisites — they each have a reason.
 
 # Bridgy
 
+<p align="center">
+  <img src="media/hero.png" alt="Bridgy — chat with Claude Code from your iPhone" width="100%">
+</p>
+
+<p align="center">
+  <a href="media/demo.mp4">▶ Watch the 60-second demo</a>
+  &nbsp;·&nbsp;
+  <em>Self-hosted on your laptop · Your Claude subscription · No third-party relay</em>
+</p>
+
+<!-- Inline player. GitHub renders this as an embedded HTML5 video on the
+     web; on GitHub mobile + RSS / other surfaces it falls back to the
+     "Watch the demo" link above, so no surface ends up blank. -->
+
+https://github.com/tomh751/claude-remote-control-bridgy/raw/main/media/demo.mp4
+
 A self-hosted mobile bridge to [Claude Code](https://docs.claude.com/code) running on your laptop.
 
 Use your iPhone (or any phone) to chat with Claude Code running on your Windows / macOS / Linux machine — over Tailscale (or any other tunnel you prefer), no public exposure, your own Claude subscription, no third-party relay. Drive multiple parallel conversations from a multi-tab PWA, watch your laptop's tool calls stream live, hand sessions off between your desktop and your phone.
