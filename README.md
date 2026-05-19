@@ -103,8 +103,6 @@ missing prerequisites — they each have a reason.
 </p>
 
 <p align="center">
-  <a href="media/demo.mp4">▶ Watch the full demo (HD with audio)</a>
-  &nbsp;·&nbsp;
   <em>Self-hosted on your laptop · Your Claude subscription · No third-party relay</em>
 </p>
 
