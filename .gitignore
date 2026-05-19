@@ -181,6 +181,11 @@ CLAUDE.md
 .restart.log
 .restart.log.err
 
+# iOS app companion (Capacitor wrapper). Kept local during the validation
+# phase per user request. When ready to ship to App Store / collaborate via
+# GitHub, remove this line and commit the folder.
+ios-app/
+
 # Dev-only output folders. Both regenerate from running the relevant
 # tool / launcher and contain noise the public repo doesn't need.
 #   logs/             — bridge.log / bridge.log.err / .restart.log* land here when

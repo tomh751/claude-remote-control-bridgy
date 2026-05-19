@@ -68,6 +68,11 @@ log = logging.getLogger(__name__)
 
 AUTH_COOKIE = "crc_auth"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+# iOS / Capacitor companion uses the same HMAC token format as the cookie,
+# just presented as `Authorization: Bearer <token>`. Longer TTL since
+# Keychain storage is stickier than a browser cookie — users don't expect
+# to retype credentials after every 30 days on a native app.
+BEARER_MAX_AGE = 60 * 60 * 24 * 90  # 90 days
 WS_OUTBOUND_QSIZE = 256
 
 # Windows: hide console window on every child process the bridge spawns
@@ -283,6 +288,11 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
     # url-safe strings and expire after MEDIA_TOKEN_TTL_S.
     media_tokens: dict[str, tuple[Path, float]] = {}
 
+    # iOS pairing registry: device_id → {label, paired_at, expires_at, ...}.
+    # Populated by POST /api/pair. Restart-resetable (devices re-pair on next
+    # launch via the same flow). See the "Mobile-app pairing" section below.
+    mobile_devices: dict[str, dict[str, Any]] = {}
+
     # Per-session locks so a phone double-tap or a Safari retry can't drive
     # two concurrent compact_inplace requests against the same jsonl —
     # which would otherwise both read the same last-assistant uuid and
@@ -312,23 +322,34 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
     # who legitimately authenticates several times in quick succession (e.g.
     # debugging from multiple devices) must not get locked out by their own
     # successful logins.
+    #
+    # Two separate buckets so a flood on /api/pair (iOS endpoint) can't
+    # also lock the PWA's /login flow — and vice versa. Otherwise an
+    # adversary on the same tailnet could brute /api/pair until the budget
+    # was burned, then the user's own phone hits 429 on /login. Same
+    # numeric budget, separate counters.
     login_attempts: dict[str, list[float]] = {}
+    pair_attempts: dict[str, list[float]] = {}
 
-    def _rate_limit_ok(ip: str) -> bool:
-        """True if `ip` is still under the failure budget. Pure read — does
-        NOT record this call. Caller records via `_rate_limit_record_failure`
-        after the password check returns false."""
+    def _rate_limit_ok(ip: str, *, bucket: dict[str, list[float]] | None = None) -> bool:
+        """True if `ip` is still under the failure budget for the given bucket.
+        Pure read — does NOT record this call. Defaults to the PWA /login
+        bucket when no bucket is passed (backwards-compatible)."""
+        if bucket is None:
+            bucket = login_attempts
         now = time.time()
-        attempts = [t for t in login_attempts.get(ip, []) if now - t < LOGIN_RATE_WINDOW_S]
-        login_attempts[ip] = attempts          # gc stale entries
+        attempts = [t for t in bucket.get(ip, []) if now - t < LOGIN_RATE_WINDOW_S]
+        bucket[ip] = attempts          # gc stale entries
         return len(attempts) < LOGIN_RATE_MAX
 
-    def _rate_limit_record_failure(ip: str) -> None:
-        """Append a failure timestamp for `ip`."""
+    def _rate_limit_record_failure(ip: str, *, bucket: dict[str, list[float]] | None = None) -> None:
+        """Append a failure timestamp for `ip` in the given bucket."""
+        if bucket is None:
+            bucket = login_attempts
         now = time.time()
-        attempts = [t for t in login_attempts.get(ip, []) if now - t < LOGIN_RATE_WINDOW_S]
+        attempts = [t for t in bucket.get(ip, []) if now - t < LOGIN_RATE_WINDOW_S]
         attempts.append(now)
-        login_attempts[ip] = attempts
+        bucket[ip] = attempts
 
     def _is_authed(cookie_val: str | None) -> bool:
         # The cookie is a self-validating HMAC blob, not the password itself.
@@ -336,9 +357,25 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
         # recover the password.
         return _verify_session_cookie(cfg.web_password, cookie_val)
 
-    def require_auth(crc_auth: str | None = Cookie(default=None, alias=AUTH_COOKIE)) -> None:
-        if not _is_authed(crc_auth):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    def _bearer_token(request: Request) -> str | None:
+        h = request.headers.get("authorization")
+        if not h or not h.lower().startswith("bearer "):
+            return None
+        return h[7:].strip() or None
+
+    def require_auth(
+        request: Request,
+        crc_auth: str | None = Cookie(default=None, alias=AUTH_COOKIE),
+    ) -> None:
+        # Accept either the PWA cookie (HMAC same-format) OR an
+        # `Authorization: Bearer <token>` header from the iOS app. The
+        # token format is identical; both go through _verify_session_cookie.
+        if _is_authed(crc_auth):
+            return
+        bearer = _bearer_token(request)
+        if bearer and _is_authed(bearer):
+            return
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     def require_csrf(request: Request) -> None:
         """Require the custom header on every mutating POST except /login.
@@ -457,6 +494,22 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
         request: Request,
         crc_auth: str | None = Cookie(default=None, alias=AUTH_COOKIE),
     ):
+        # iOS app hand-off: when the Capacitor wrapper navigates the
+        # WebView to <bridge>/?jwt=<token>, we validate the token (same
+        # HMAC format as the cookie), set the cookie, and redirect to a
+        # clean URL so the JWT doesn't sit in the address bar / history.
+        jwt_param = request.query_params.get("jwt")
+        if jwt_param and _is_authed(jwt_param):
+            resp = RedirectResponse(url=f"/c?b={_BUILD_ID}", status_code=302)
+            resp.set_cookie(
+                key=AUTH_COOKIE,
+                value=jwt_param,
+                max_age=BEARER_MAX_AGE,
+                httponly=True,
+                samesite="lax",
+                secure=cfg.web_cookie_secure,
+            )
+            return resp
         if not _is_authed(crc_auth):
             return RedirectResponse(url="/login", status_code=302)
         # Honor a caller-supplied ?fresh=<token> as the chat-URL build stamp
@@ -533,6 +586,112 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
             secure=cfg.web_cookie_secure,
         )
         return resp
+
+    # ── Mobile-app pairing (iOS Capacitor companion) ─────────────────────
+    #
+    # Same single-user, password-on-the-laptop model as the PWA. The
+    # difference is the wire shape: instead of Set-Cookie, the iOS app
+    # gets the same HMAC token in the response body and presents it as
+    # `Authorization: Bearer <token>`. Format and verification are
+    # identical (_verify_session_cookie); the cookie path stays untouched.
+    #
+    # CORS: these endpoints intentionally allow `*` origin so the iOS
+    # app's WebView (cross-origin to the bridge) can call them. Safe
+    # because:
+    #   - Auth is via password-in-body or Bearer-in-header, never cookies
+    #   - Allow-Credentials is NOT sent, so browsers won't attach the
+    #     PWA's cookie even if the iOS app's WebView shares a jar
+    #   - The PWA's CSRF defense (X-CRC-Request + cookie auth on /login)
+    #     is unaffected — those endpoints have no CORS headers
+    _MOBILE_CORS_HEADERS = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, X-CRC-Request",
+        "Access-Control-Max-Age": "86400",
+    }
+
+    def _mobile_cors(resp: Response) -> Response:
+        for k, v in _MOBILE_CORS_HEADERS.items():
+            resp.headers[k] = v
+        return resp
+
+    # CORS preflight for every endpoint the iOS app calls. FastAPI doesn't
+    # auto-handle OPTIONS for endpoints we declared as POST/GET only.
+    @app.options("/api/pair")
+    @app.options("/api/devices/register")
+    @app.options("/api/state")
+    async def _mobile_cors_preflight() -> Response:
+        return _mobile_cors(Response(status_code=204))
+
+    # Re-decorated /api/state below — see the top of the existing handler
+    # for the source. We *also* attach CORS headers there so the iOS app's
+    # cross-origin GET succeeds. (Same-origin PWA calls ignore CORS.)
+
+    @app.post("/api/pair")
+    async def api_pair(request: Request, body: dict[str, Any] = Body(...)) -> Response:
+        client_ip = request.client.host if request.client else "?"
+        if not _rate_limit_ok(client_ip, bucket=pair_attempts):
+            await asyncio.sleep(1.0)
+            return _mobile_cors(JSONResponse(
+                {"ok": False, "error": "Too many attempts — wait a minute."},
+                status_code=429,
+            ))
+        password = (body.get("password") or "").strip()
+        device_id = (body.get("device_id") or "").strip()
+        device_label = (body.get("device_label") or "iOS device").strip()[:64]
+        if not password or not device_id:
+            return _mobile_cors(JSONResponse(
+                {"ok": False, "error": "Missing password or device_id."},
+                status_code=400,
+            ))
+        if not secrets.compare_digest(password, cfg.web_password):
+            _rate_limit_record_failure(client_ip, bucket=pair_attempts)
+            await asyncio.sleep(0.5)
+            return _mobile_cors(JSONResponse(
+                {"ok": False, "error": "Invalid password."},
+                status_code=401,
+            ))
+        token = _mint_session_cookie(cfg.web_password, ttl_s=BEARER_MAX_AGE)
+        # Stash the registration so a future "list paired devices" endpoint
+        # has something to show. In-memory: we re-pair on every iOS launch
+        # anyway, and persistence brings its own headaches (file locking,
+        # corruption, GDPR). Restart-reset is fine here.
+        mobile_devices[device_id] = {
+            "label": device_label,
+            "paired_at": int(time.time()),
+            "expires_at": int(time.time()) + BEARER_MAX_AGE,
+            "client_ip": client_ip,
+        }
+        log.info("iOS pair: device=%s ip=%s label=%r", device_id, client_ip, device_label)
+        return _mobile_cors(JSONResponse({
+            "ok": True,
+            "jwt": token,
+            "expires_at": int(time.time()) + BEARER_MAX_AGE,
+            "device_id": device_id,
+        }))
+
+    @app.post("/api/devices/register")
+    async def api_devices_register(
+        request: Request,
+        body: dict[str, Any] = Body(...),
+        _: None = Depends(require_auth),
+    ) -> Response:
+        apns_token = (body.get("apns_token") or "").strip()
+        platform = (body.get("platform") or "ios").strip().lower()
+        if not apns_token or platform not in {"ios", "android"}:
+            return _mobile_cors(JSONResponse(
+                {"ok": False, "error": "Missing apns_token or bad platform."},
+                status_code=400,
+            ))
+        # APNs / FCM push send is a separate piece of work; for now we just
+        # log the registration so the iOS app's pair flow completes cleanly.
+        # When push send lands, the registry lives in a new bridge/push_apns.py
+        # module and reads from here.
+        log.info("Push token registered: platform=%s ip=%s len=%d",
+                 platform,
+                 request.client.host if request.client else "?",
+                 len(apns_token))
+        return _mobile_cors(JSONResponse({"ok": True}))
 
     # ── Passkeys (Face ID / Touch ID) ─────────────────────────────────────
 
@@ -2207,9 +2366,12 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
         }
 
     @app.get("/api/state")
-    async def api_state(_: None = Depends(require_auth)):
+    async def api_state(_: None = Depends(require_auth)) -> Response:
         running = sessions.list_running()
-        return {
+        # CORS-headers via _mobile_cors so the iOS app can poll this from
+        # cross-origin (Bearer-authed). Same-origin PWA calls ignore the
+        # extra headers — they're not harmful, just unused.
+        return _mobile_cors(JSONResponse({
             "projects": list_projects(state.active_root),
             "default_permission_mode": cfg.default_permission_mode,
             "running": [
@@ -2221,7 +2383,7 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
                 "active_root": str(state.active_root),
                 "allowed_roots": sorted(str(p) for p in state.allowed_roots),
             },
-        }
+        }))
 
     @app.get("/api/git_diff")
     async def api_git_diff(
