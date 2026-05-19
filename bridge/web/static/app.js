@@ -434,7 +434,14 @@ const TTS = {
           let p = n.parentNode;
           while (p && p !== body) {
             const tag = p.nodeName;
-            if (tag === 'CODE' || tag === 'PRE') return NodeFilter.FILTER_REJECT;
+            // Skip code/pre (read-aloud of source code is gibberish) AND
+            // skip <a> (without this, the .tts-word span's click handler
+            // preventDefaults the link click and TTS starts reading the
+            // link text instead of navigating — reported 2026-05-20).
+            // The markdown renderer already wraps links with
+            // target="_blank" rel="noopener", so leaving the link text
+            // unwrapped lets the browser handle navigation natively.
+            if (tag === 'CODE' || tag === 'PRE' || tag === 'A') return NodeFilter.FILTER_REJECT;
             p = p.parentNode;
           }
           return n.nodeValue && /\S/.test(n.nodeValue)
@@ -6268,6 +6275,23 @@ const Chat = {
     }
     const runs = this._runsFor(tabId);
     if (runs) runs.delete(String(runId));
+    // Sweep phantom entries that came from a lazy beginRun on a frame
+    // whose run_id was null/undefined (e.g. a watcher-driven media
+    // frame that raced with run_finished and lost _run_id server-side).
+    // Their run_finished can never arrive, so without sweeping them
+    // tab.running stays stuck on at runs.size > 0 forever and the
+    // composer's stop button never flips back to send.
+    // Legitimate concurrent /ask runs use run_id >= 1_000_000 (see
+    // sessions.py:143) so they have finite numeric keys and survive.
+    if (runs && runs.size > 0) {
+      for (const [key, entry] of Array.from(runs.entries())) {
+        if (Number.isFinite(Number(key))) continue;
+        try { entry.container && entry.container.classList.remove('msg--running'); } catch {}
+        if (entry.cycler) { try { clearInterval(entry.cycler); } catch {} entry.cycler = null; }
+        if (entry.spinnerTimer) { try { entry.spinnerTimer(); } catch {} entry.spinnerTimer = null; }
+        runs.delete(key);
+      }
+    }
     // Attach copy action to the completed assistant message. Walks
     // the entire stream — prose bodies AND every tool card / result —
     // and serializes them to markdown so the clipboard payload
@@ -6438,8 +6462,29 @@ const Chat = {
           for (const tab of State.tabs || []) {
             const live = liveTabIds.has(tab.id);
             if (tab.running && !live) {
+              // Server says this tab isn't running anymore — `run_finished`
+              // never reached us (WS reconnect, background suspend, etc.).
+              // Sweep cyclers from any tracked runs AND strip `msg--running`
+              // from every orphan container in the DOM, otherwise the kawaii
+              // mascot + status word keeps animating forever (reported
+              // 2026-05-20).
+              if (tab._activeRuns) {
+                for (const run of tab._activeRuns.values()) {
+                  if (run.cycler) { clearInterval(run.cycler); run.cycler = null; }
+                  if (run.spinnerTimer) { try { run.spinnerTimer(); } catch {} run.spinnerTimer = null; }
+                  if (run.container) { try { run.container.classList.remove('msg--running'); } catch {} }
+                }
+                tab._activeRuns.clear();
+              }
+              if (tab._chatpane) {
+                tab._chatpane.querySelectorAll(
+                  '.msg--asst.msg--running:not(.msg--ghostThinking)'
+                ).forEach((stale) => {
+                  try { stale.classList.remove('msg--running'); } catch {}
+                });
+              }
               tab.running = false;
-              if (tab._activeRuns) tab._activeRuns.clear();
+              tab._lastFinishedAt = Date.now();
             } else if (live) {
               // Ignore "still running" if we JUST finished a run locally.
               // Server's list_running has a brief reconciliation lag; a
@@ -10227,6 +10272,7 @@ function _runSendAction() {
       }
     }
     tab.running = false;
+    tab._lastFinishedAt = Date.now();
     if (tab._queue && tab._queue.length) {
       _clearQueuedBubbles(tab);
       tab._queue = [];
@@ -10234,6 +10280,10 @@ function _runSendAction() {
     }
     renderTabs();
     updateSendButton();
+    // Reap the ghost spinner — without this, the kawaii mascot + status
+    // word kept cycling forever after the user tapped Stop (reported
+    // 2026-05-20: composer flipped to send mode but the spinner stayed).
+    try { Chat.ensureRunningSpinner(tab.id); } catch {}
     try { _markLatestUserBubbleInterrupted(tab.id); } catch {}
     WS.send({ type: 'stop', tab_id: tab.id, project: tab.project });
     return;
@@ -11781,6 +11831,51 @@ setInterval(() => {
   WS.ensureLive();
   WS.send({ type: 'ping' });
 }, 25000);
+
+// Defensive periodic reconciler — runs every 5s.
+//
+// Why this exists: the kawaii mascot + status-word animation lives on
+// every `.msg--asst.msg--running` container and on `tab._ghostThinking`.
+// Both have their own setInterval cyclers. The user reported (2026-05-20)
+// repeated cases where Claude clearly finished but the spinner kept
+// animating — usually because a code path mutated `tab.running` without
+// also calling `Chat.ensureRunningSpinner()`, OR a `run_finished` WS
+// frame got dropped (background suspend, WS reconnect, server restart)
+// and no client-side path ever reaped the stale msg--running container.
+//
+// This sweep heals BOTH classes of leak within 5s. Cheap (DOM query on
+// the active pane only) so it's safe to run continuously.
+function _reconcileRunningState() {
+  try {
+    for (const tab of State.tabs || []) {
+      if (!tab._chatpane) continue;
+      const realRunning = tab._chatpane.querySelectorAll(
+        '.msg--asst.msg--running:not(.msg--ghostThinking)'
+      );
+      if (!tab.running && realRunning.length) {
+        // Leak: tab.running=false but stale msg--running cyclers are
+        // still ticking. Strip the class + clear any tracked cyclers.
+        realRunning.forEach((node) => {
+          try { node.classList.remove('msg--running'); } catch {}
+        });
+        if (tab._activeRuns) {
+          for (const run of tab._activeRuns.values()) {
+            if (run.cycler) { clearInterval(run.cycler); run.cycler = null; }
+            if (run.spinnerTimer) { try { run.spinnerTimer(); } catch {} run.spinnerTimer = null; }
+          }
+          tab._activeRuns.clear();
+        }
+      }
+      // Sync the ghost spinner state in both directions — creates the
+      // ghost when tab.running=true and no real running message exists,
+      // removes it when tab.running=false or a real one exists.
+      try { Chat.ensureRunningSpinner(tab.id); } catch {}
+    }
+  } catch (e) {
+    try { console.warn('[reconciler]', e && e.message); } catch {}
+  }
+}
+setInterval(_reconcileRunningState, 5000);
 
 // ─── Face ID / passkey registration ──────────────────────────────────
 // base64url ↔ ArrayBuffer helpers — same as on login.html, kept inline so

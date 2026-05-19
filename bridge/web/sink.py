@@ -215,6 +215,17 @@ class WebSink:
                 tag=tag,
             )
             return
+        # Drop trailing media frames that arrive AFTER run_finished cleared
+        # _run_id. The watcher's stabilize-and-upload task can race with
+        # run end: by the time it calls send_media, _run_id is None.
+        # Emitting `run_id: null` makes the client lazy-create a phantom
+        # "null"-keyed entry in _activeRuns that never receives a real
+        # run_finished, so the composer's stop button stays stuck. The
+        # user just doesn't see this trailing image in chat — they can
+        # still find it on disk under the project's watch folder.
+        if self._run_id is None:
+            log.info("dropping media frame for %s — no active run (run_finished already fired)", path.name)
+            return
         url = self._media_url_for(path)
         mime = _guess_mime(ext)
         kind = "video" if mime.startswith("video/") else "image"
