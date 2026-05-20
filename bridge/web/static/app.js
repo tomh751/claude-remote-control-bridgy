@@ -4707,14 +4707,77 @@ function attachMessageLongPress(msgEl, getText, opts) {
   });
 }
 
+// ─── Deleted-message persistence ─────────────────────────────────────
+//
+// When the user long-press → Delete on a user bubble, we ALSO record
+// the message's text signature in localStorage so a session replay
+// (close + reopen, /sessions drawer reload, etc.) doesn't re-render
+// the bubble. The bridge's session jsonl on disk still has the turn —
+// this is a chat-UI "hide forever" operation, not a server-side
+// history rewrite.
+//
+// Scoping: (sessionId, djb2(text)). Two reasons:
+//   - sessionId scope means a delete in chat A doesn't suppress an
+//     identical message in chat B
+//   - text-hash means duplicate messages within the same session
+//     (e.g. user sent the same prompt twice) both get hidden, which is
+//     acceptable — the next live send WITHOUT `replay:true` still
+//     renders, so re-asking the same thing still works.
+const DELETED_MSGS_KEY = 'crc.deletedMsgs';
+
+function _msgSignature(text) {
+  if (!text) return 'e';
+  // djb2: sync, fast, collision-resistant enough for per-session hashes.
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
+function _readDeletedMsgsMap() {
+  try {
+    const raw = localStorage.getItem(DELETED_MSGS_KEY);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch { return {}; }
+}
+
+function _writeDeletedMsgsMap(m) {
+  try { localStorage.setItem(DELETED_MSGS_KEY, JSON.stringify(m)); } catch {}
+}
+
+function _isMsgDeletedFromHistory(sessionId, text) {
+  if (!sessionId || !text) return false;
+  const m = _readDeletedMsgsMap();
+  const arr = m[sessionId];
+  return Array.isArray(arr) && arr.includes(_msgSignature(text));
+}
+
+function _markMsgDeletedInHistory(sessionId, text) {
+  if (!sessionId || !text) return;
+  const m = _readDeletedMsgsMap();
+  if (!Array.isArray(m[sessionId])) m[sessionId] = [];
+  const sig = _msgSignature(text);
+  if (!m[sessionId].includes(sig)) {
+    m[sessionId].push(sig);
+    _writeDeletedMsgsMap(m);
+  }
+}
+
 // Hide a user message from the chat view. Triggered from the long-press
 // popover's Delete action. Animates out with a brief opacity/scale fade
-// so the deletion feels intentional (not a glitch). The bridge keeps
-// the underlying turn in its session jsonl on disk — this is a chat-UI
-// "hide" operation, not a history rewrite, so a future session replay
-// would reload the turn.
+// so the deletion feels intentional (not a glitch). ALSO persists the
+// deletion to localStorage so close + reopen doesn't re-render the
+// bubble (the bridge's session jsonl on disk still has the turn —
+// this is a chat-UI "hide forever" operation, see the
+// "Deleted-message persistence" block above).
 function _deleteUserMessage(msgEl) {
   if (!msgEl || !msgEl.parentNode) return;
+  try {
+    const tab = getActiveTab();
+    const text = msgEl.dataset.text || '';
+    if (tab && tab.sessionId && text) {
+      _markMsgDeletedInHistory(tab.sessionId, text);
+    }
+  } catch {}
   // If we were mid-edit on this message, exit edit mode first so the
   // crc-editing body class + composer hide-state get cleaned up.
   try { if (msgEl.classList.contains('msg--editing')) _exitMessageEdit({ restore: true }); } catch {}
@@ -5385,7 +5448,17 @@ const Chat = {
     wrap.append(actions);
   },
 
-  pushUser(text, attachments = [], tabId) {
+  pushUser(text, attachments = [], tabId, opts) {
+    // Honor a persisted user-initiated delete during replay only. Live
+    // sends always render (user might be re-asking the same prompt on
+    // purpose — that should appear). See `_deleteUserMessage` +
+    // `_markMsgDeletedInHistory` for the storage shape.
+    if (opts && opts.replay) {
+      const tab = getTab(tabId);
+      if (tab && tab.sessionId && text && _isMsgDeletedFromHistory(tab.sessionId, text)) {
+        return null;
+      }
+    }
     const pane = this._paneFor(tabId);
     if (!pane) return;
     this._maybeHideEmpty(tabId);
@@ -8906,7 +8979,7 @@ async function _replaySessionInto(tab, project, sessionId) {
         Chat.appendAgentComplete(a.tool_use_id || '', a.summary || '', a.result || '', a.status || 'completed', tab.id);
         continue;
       }
-      if (t.user) Chat.pushUser(t.user.text || '', t.user.attachments || [], tab.id);
+      if (t.user) Chat.pushUser(t.user.text || '', t.user.attachments || [], tab.id, { replay: true });
       if (t.assistant.length) {
         const rid = syntheticId--;
         Chat.beginRun(project, rid, tab.id, { silent: true });
@@ -12488,5 +12561,8 @@ try {
     window.switchTab = switchTab;
     window._applyPushDeepLink = _applyPushDeepLink;
     window._renderMarkdown = _renderMarkdown;
+    window._deleteUserMessage = _deleteUserMessage;
+    window._isMsgDeletedFromHistory = _isMsgDeletedFromHistory;
+    window._markMsgDeletedInHistory = _markMsgDeletedInHistory;
   }
 } catch {}
