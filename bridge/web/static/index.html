@@ -6,6 +6,21 @@
        chat content don't zoom the whole UI. Zoom INSIDE the lightbox is
        implemented in JS via touch / iOS gesture events — see the
        setupLightboxZoom hook in app.js. -->
+  <!-- `interactive-widget=resizes-content` is IGNORED by iOS WebKit
+       (WebKit/standards-positions#65, status "Needs position", as of
+       Safari 18.7). Don't include it — it's misleading. iOS defaults
+       to `resizes-visual` behavior: layout viewport stays full,
+       visual viewport shrinks. The keyboard rise is animated and
+       visualViewport.height arrives in resize events at (or very
+       near) the END of the animation, not per-frame during it
+       (WebKit bug 265578). We approximate the lock-step shrinkage
+       via a CSS `transition: height` on body — see app.css.
+       The topbar-slide symptom is NOT caused by viewport geometry —
+       it's iOS auto-scrolling the focused composer into view. The
+       fix is the `touchstart` + `translateY(-9999px)` shim on the
+       composer textarea (see app.js setupComposerAutoScrollGuard)
+       which makes the focused element unreachable for the auto-
+       scroll calculation. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
   <meta name="theme-color" content="#1a1614" id="themeColorMeta" />
   <!-- Inline base styles BEFORE any external stylesheet loads.
@@ -546,7 +561,7 @@
     </div>
 
     <!-- File input (hidden; opened by plus button) -->
-    <input type="file" id="fileInput" multiple hidden accept="image/*,application/pdf,text/*,.md,.json,.csv,.log,.py,.js,.ts,.html,.css" />
+    <input type="file" id="fileInput" multiple hidden accept="image/*,video/*,application/pdf,text/*,.md,.json,.csv,.log,.py,.js,.ts,.html,.css,.mp4,.mov,.m4v,.webm,.3gp" />
   </footer>
 
   <!-- Bottom sheets -->

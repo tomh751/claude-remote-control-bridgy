@@ -129,26 +129,33 @@ input, textarea, select, button { font: inherit; color: inherit; }
 input, textarea { font-size: 16px; }
 
 html, body {
-  height: 100%;
-  overflow: hidden;
   margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+html, body {
+  /* `--vv-h` is mirrored from window.visualViewport.height by
+     syncVisualViewport() in app.js. iOS `interactive-widget=
+     resizes-content` is NOT implemented (WebKit/standards-positions
+     #65), so under the de-facto `resizes-visual` model we have to
+     drive the keyboard shrink ourselves. visualViewport.height
+     excludes both the keyboard AND the form-input accessory bar
+     (Previous / Next / Done), so it's the correct ceiling for the
+     composer-visible region. `min(100dvh, vv-h)` picks the smaller
+     of the two — 100dvh when the keyboard is closed (vv tracking
+     can lag a frame at cold-boot), vv-h when the keyboard is up. */
+  height: min(100dvh, var(--vv-h, 100dvh));
 }
 body {
-  /* Pin body to the viewport edges so it physically cannot exceed the
-     visible region. On iOS standalone PWAs, `height: 100dvh` was
-     sometimes computing taller than the visible screen, leaving a fat
-     dark band at the bottom below the composer. Anchoring with
-     `position: fixed; inset: 0` removes that ambiguity — body fills
-     exactly the layout viewport, and the safe-area inset for the home
-     indicator is handled INSIDE the composer's bottom padding. */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr);
   position: fixed;
   inset: 0;
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  /* `minmax(0, 1fr)` lets the column shrink below its content width,
-     so the tabs strip and code blocks can overflow internally instead
-     of forcing the entire body wider than the viewport. */
-  grid-template-columns: minmax(0, 1fr);
+  /* Top padding reserves space for the position:fixed topbar (which
+     is no longer in body's flow). --topbar-h is 52px; safe-area-inset
+     adds the iPhone notch. */
+  padding-top: calc(var(--topbar-h, 52px) + max(var(--safe-top, 0px), 8px));
 }
 
 button, input, textarea, select {
@@ -174,7 +181,15 @@ a { color: var(--accent); text-decoration: none; }
 /* ─── Top bar ───────────────────────────────────────────────────────── */
 
 .topbar {
-  position: sticky; top: 0; z-index: 10;
+  /* `position: fixed` (not sticky) so the topbar cannot be shifted by
+     ANY iOS body movement during the keyboard animation. Anchored to
+     viewport top. body has `padding-top: var(--topbar-total-h)` below
+     so the grid content (tabs / chat / composer) starts beneath. */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
   /* `max(var(--safe-top), 8px)`: in PWA standalone mode env(safe-area-inset-top)
      returns the notch height (~47-59pt) and pushes our content below the
      iOS status bar. In Safari browser mode env() can return 0 (Safari draws
@@ -2015,7 +2030,14 @@ body.crc-editing #newMessagesPill { display: none !important; }
    again. Positioned above the composer with safe-area-inset padding
    so it doesn't get pushed under the iOS home indicator. */
 .jumpBottom {
-  position: fixed;
+  /* `position: absolute` (not fixed) so this rides with <body>, whose
+     bottom edge tracks the visible region above the keyboard via
+     `height: var(--app-h)`. Under the old fixed-to-layout-viewport
+     positioning, when the keyboard was open this button stayed
+     anchored to the screen-bottom area behind the keyboard. Body has
+     `position: fixed` which makes it a positioned ancestor, so
+     absolute children resolve to body's box. */
+  position: absolute;
   left: 16px;
   /* Sits just above the composer regardless of how many lines the user
      has typed. --composer-h is kept in sync with #composer's
@@ -2057,7 +2079,11 @@ body.crc-editing #newMessagesPill { display: none !important; }
    above the composer so it doesn't compete with the jump button on
    the left edge. */
 .newMessagesPill {
-  position: fixed;
+  /* `position: absolute` — same reasoning as .jumpBottom above.
+     Anchored relative to <body> (which is position:fixed and sized to
+     --app-h) so the pill rides up above the keyboard with the
+     composer, rather than staying behind the keyboard. */
+  position: absolute;
   left: 50%;
   /* See .jumpBottom — anchored to the composer's top edge via the
      --composer-h custom property so a multi-line composer pushes both
@@ -3031,13 +3057,19 @@ body:has(.sheet:not([hidden])) .newMessagesPill {
   border: none; outline: none;
   background: transparent;
   resize: none;
-  max-height: 40vh;
+  /* Cap at ~6 lines (16px × 1.4 lh ≈ 22.4px/line, plus padding) so the
+     textarea stops growing before it eats the chat — once exceeded, the
+     textarea itself scrolls. Previous `40vh` let it grow to nearly half
+     the screen on a tall phone, hiding everything you had just typed
+     about. The 30vh ceiling keeps it sane on short viewports too. */
+  max-height: min(150px, 30vh);
   min-height: 24px;
   line-height: 1.4;
   color: var(--fg);
   font-family: var(--font-body);
   /* keep 16px to avoid iOS auto-zoom */
   font-size: 16px;
+  overflow-y: auto;
 }
 .composer__input::placeholder { color: var(--fg-3); }
 
@@ -3107,7 +3139,13 @@ body:has(.sheet:not([hidden])) .newMessagesPill {
      full width so the row reads as a balanced two-pill layout rather
      than two pills crowding the left edge. `flex: 1 1 0` on each chip
      (see .modechip below) plus `justify-content: stretch` here lets
-     each chip claim half the available width with the gap in between. */
+     each chip claim half the available width with the gap in between.
+     NOTE: an earlier attempt collapsed this row on textarea focus to
+     free chat space (user 2026-05-20 20:36); reverted 21:51 because
+     hiding the chips made permission / model / agent / effort
+     pickers inaccessible while typing. The chips stay always-visible
+     now — the chat just gets a smaller area when the keyboard is up,
+     which is iOS's reality and matches WhatsApp's behavior. */
   display: flex; align-items: stretch;
   gap: 10px;
   margin-top: 6px;

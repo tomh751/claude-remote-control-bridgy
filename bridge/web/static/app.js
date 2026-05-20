@@ -14,6 +14,192 @@
 const CRC_ASSET_VERSION = (typeof window !== 'undefined' && window.CRC_ASSET_VERSION) || 'unknown';
 try { console.log('[CRC] client asset_version=' + CRC_ASSET_VERSION); } catch {}
 
+// ─── Visual-viewport diagnostics ──────────────────────────────────────
+//
+// Body geometry is no longer JS-driven. We use
+// `interactive-widget=resizes-content` (see index.html) so iOS shrinks
+// the layout viewport natively when the soft keyboard opens, and
+// `body { height: 100dvh }` tracks the shrunken viewport automatically.
+// No --app-h or --app-top CSS vars; no `position: fixed` shenanigans.
+//
+// This module is now purely diagnostic — it mounts the debug HUD when
+// the in-app "Debug log" toggle is on, so we can still SEE what iOS
+// reports during the keyboard animation if a new bug appears.
+(function syncVisualViewport() {
+  try {
+    const root = document.documentElement;
+    // Clear any --app-h / --app-top values left over from a previous
+    // asset version under the old `resizes-visual` strategy. iOS PWAs
+    // can pick up stale inline-style values via service-worker cache
+    // continuity, and a stale --app-h would override our new 100dvh.
+    root.style.removeProperty('--app-h');
+    root.style.removeProperty('--app-top');
+    root.style.removeProperty('--app-translate-y');
+    const apply = () => {
+      // Mirror visualViewport.height into --vv-h so body's CSS height
+      // can pick `min(100dvh, var(--vv-h))`. 100dvh under
+      // `interactive-widget=resizes-content` already shrinks for the
+      // keyboard, but iOS draws the form-input accessory bar
+      // (Previous/Next/Done) INSIDE the layout viewport so it covers
+      // the composer; visualViewport.height excludes both keyboard
+      // and accessory bar, giving us a tighter ceiling.
+      const vv = window.visualViewport;
+      if (vv && vv.height > 0) {
+        root.style.setProperty('--vv-h', vv.height + 'px');
+      }
+    };
+    apply();
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', apply, { passive: true });
+      window.visualViewport.addEventListener('scroll', apply, { passive: true });
+    }
+    window.addEventListener('resize', apply, { passive: true });
+    window.addEventListener('orientationchange', apply, { passive: true });
+
+    // Window-scroll lock. Body is `position: fixed; inset: 0` and html
+    // has overflow:hidden — neither should be scrollable. But iOS's
+    // auto-scroll-focused-input-into-view runs at the window level and
+    // can still bump window.scrollY > 0, which on a position:fixed
+    // body has no effect on body itself but DOES translate any non-
+    // fixed root-positioned children (and on some iOS versions, the
+    // composited body too) upward. Clamp scrollY back to 0 on any
+    // attempt — cheap, idempotent, and silent when not triggered.
+    const _clampScroll = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+    window.addEventListener('scroll', _clampScroll, { passive: true });
+    document.addEventListener('focusin', _clampScroll, { passive: true });
+
+    // iOS auto-scroll-into-view shim (Searls trick).
+    // When the user taps the composer textarea, iOS Safari runs an
+    // internal "scroll focused element into view" pass synchronously
+    // on focus. With body `position: fixed; inset: 0` that scroll has
+    // no net effect, but during the keyboard rise animation iOS still
+    // momentarily slides body DOWN to make room — visible as the
+    // topbar disappearing under the status bar and an empty black
+    // band appearing above it (user video 2026-05-20 18:41).
+    // The fix: on touchstart (which fires BEFORE focus), translateY
+    // the textarea -9999px off-screen, then let focus fire on a
+    // target Safari can't reach, then restore the transform in the
+    // next animation frame. The actual focus succeeds (the element
+    // is in the DOM and focusable), but Safari's scroll-into-view
+    // calculation can't pin a target rectangle, so the auto-scroll
+    // no-ops. Source: https://gist.github.com/searls/d6fd21a57b7c70be12f65beb17bb6149
+    // Bind once on the textarea; reapply if the element is re-created
+    // (we don't currently re-create it, but defensive).
+    const _wireComposerAutoScrollGuard = () => {
+      const ta = document.getElementById('input');
+      if (!ta || ta.dataset.crcAutoscrollGuard) return;
+      ta.dataset.crcAutoscrollGuard = '1';
+      // Defensive: clear any translateY(-9999) left over from the
+      // 1.0.214 Searls-shim experiment (service-worker cache continuity
+      // can carry a stale inline style across version bumps).
+      try {
+        if (ta.style.transform && ta.style.transform.includes('-9999')) {
+          ta.style.transform = '';
+        }
+      } catch {}
+      // NOTE: the preemptive --vv-h shrink on touchstart (1.0.216 /
+      // 1.0.217) was REMOVED — it interrupted iOS's touch-to-focus
+      // chain. Setting --vv-h synchronously caused a body reflow that
+      // (on iPhone 18.7 PWA standalone) blocked the keyboard from
+      // appearing on the first tap (user "the first press on the
+      // composer doesn't show the keyboard - just empty space",
+      // 2026-05-20 21:34). The hero-slide-on-open is the lesser
+      // evil — at least typing works. Future approach: shrink on
+      // FOCUS (after iOS has committed the tap), not touchstart.
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _wireComposerAutoScrollGuard, { once: true });
+    } else {
+      _wireComposerAutoScrollGuard();
+    }
+
+    // Clear any --tabs-h / --composer-h CSS vars left over from the
+    // brief position:fixed restructure attempt (1.0.207-208). Layout
+    // is back to body grid (auto auto 1fr auto) so those vars are
+    // unused; stale values would no-op but explicit removal is safer.
+    document.documentElement.style.removeProperty('--tabs-h');
+    document.documentElement.style.removeProperty('--composer-h');
+
+    // The composer focus-class toggle was removed 2026-05-20 21:51 —
+    // collapsing the mode-chip row made permission/model/agent/effort
+    // pickers inaccessible while typing (user complaint). If a future
+    // round needs chat-area-while-typing back, do it via a less
+    // destructive change (e.g. tighter padding, not hiding the row).
+    // Defensive cleanup of any stale crc-composer-focus class.
+    try {
+      document.querySelectorAll('.crc-composer-focus').forEach((el) => {
+        el.classList.remove('crc-composer-focus');
+      });
+    } catch {}
+
+    // Debug HUD — visible whenever the in-app "Debug log" toggle is ON
+    // (menu → Debug log) or when ?vvdebug=1 is in the URL. Shows the
+    // live viewport / scroll / body geometry so we can SEE on a real
+    // iPhone what numbers iOS reports during the keyboard-open
+    // animation, and pinpoint the mechanism behind the header shift.
+    // The HUD auto-mounts on DOMContentLoaded so it picks up the
+    // localStorage-restored toggle state without a refresh dance.
+    function _mountVVHud() {
+      const wantOnFromUrl = new URLSearchParams(location.search).get('vvdebug') === '1';
+      let wantOnFromToggle = false;
+      try { wantOnFromToggle = (localStorage.getItem('crc.debugLog') === '1'); } catch {}
+      const want = wantOnFromUrl || wantOnFromToggle;
+      let hud = document.getElementById('vvHud');
+      if (!want) {
+        if (hud) hud.remove();
+        return;
+      }
+      if (hud) return;
+      hud = document.createElement('div');
+      hud.id = 'vvHud';
+      hud.style.cssText = (
+        'position:fixed;top:calc(6px + env(safe-area-inset-top, 0px));right:6px;z-index:99999;' +
+        'font:11px/1.3 ui-monospace,Menlo,monospace;' +
+        'color:#fff;background:rgba(200,40,40,.92);padding:6px 8px;' +
+        'border-radius:6px;pointer-events:none;white-space:pre;' +
+        'box-shadow:0 2px 8px rgba(0,0,0,.45);max-width:62vw;'
+      );
+      document.body.appendChild(hud);
+      const tick = () => {
+        if (!document.body.contains(hud)) return; // disposed by toggle-off
+        const vv = window.visualViewport;
+        const tb = document.querySelector('.topbar');
+        const tbR = tb ? tb.getBoundingClientRect() : { top: -1 };
+        const bR = document.body.getBoundingClientRect();
+        hud.textContent = (
+          'vv.h=' + (vv ? vv.height.toFixed(0) : '-') +
+          ' vv.t=' + (vv ? vv.offsetTop.toFixed(0) : '-') + '\n' +
+          'win.h=' + window.innerHeight +
+          ' sy=' + window.scrollY + '\n' +
+          'body.top=' + bR.top.toFixed(0) +
+          ' h=' + bR.height.toFixed(0) + '\n' +
+          'topbar.top=' + tbR.top.toFixed(0) + '\n' +
+          'tx=' + getComputedStyle(document.documentElement)
+            .getPropertyValue('--app-translate-y').trim() + '\n' +
+          'active=' + (document.activeElement && document.activeElement.id || '-')
+        );
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+    // Re-evaluate on each DOMContentLoaded + on focusin (the debug-log
+    // toggle fires _crcRenderDebugPanel which would have flipped the
+    // flag by then). Cheap to poll.
+    window._mountVVHud = _mountVVHud;
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _mountVVHud, { once: true });
+    } else {
+      _mountVVHud();
+    }
+    setInterval(_mountVVHud, 1000);
+
+  } catch {}
+})();
+
 // ─── Crash telemetry ───────────────────────────────────────────────────
 //
 // iOS Safari can kill the WebContent process under memory pressure with
@@ -10710,15 +10896,15 @@ input.addEventListener('select', () => { try { updateAutocomplete(); } catch {} 
 
 // ─── Viewport / keyboard handling ────────────────────────────────────
 //
-// CSS handles this via `body { height: 100dvh; overflow: hidden }`. iOS
-// Safari 16+ shrinks dvh to exclude the keyboard automatically — the body
-// re-flows so topbar stays at top, composer stays at bottom of the
-// shrunken area, and the chat (the 1fr grid row) fits in between.
-//
-// We DON'T touch visualViewport here. An earlier version mirrored
-// visualViewport.height into a custom property and pinned body with
-// position:fixed; that fought iOS's auto-scroll-to-keep-input-visible and
-// ended up with the topbar pushed off-screen above. Trust dvh, do less.
+// The actual sync runs near the top of this file (`syncVisualViewport`):
+// body's height and top are driven by `window.visualViewport` so the
+// layout matches the visible region above the keyboard. dvh alone was
+// not enough — dvh shrinks for browser UI but NOT for the iOS soft
+// keyboard, so the composer ended up behind the keyboard and iOS auto-
+// scrolled the page, pushing the topbar off-screen. A prior attempt
+// failed because it also translated inner elements, which double-shifted
+// against iOS's own scroll; the current pass keeps the work on <body>
+// only and leaves the inner grid alone.
 
 // On input focus, if the user was already near the bottom of chat, keep
 // them there. If they were scrolled up reading older messages, don't yank
@@ -11367,26 +11553,42 @@ const Mic = {
   rafId: 0,
 
   async start() {
+    // Server beacon on entry — lets us tell from bridge.err.log whether
+    // the mic button tap actually got into Mic.start(), without needing
+    // Safari devtools. Reported 2026-05-20: "mic isn't letting me record".
+    try { _crcBeacon('mic-start-entry', { mode: this.mode }); } catch {}
     if (this.mode) {
       try { console.warn('[mic] start() blocked: mode=' + this.mode); } catch {}
+      try { _crcBeacon('mic-fail', { stage: 'mode-busy', mode: this.mode }); } catch {}
       toast(`Mic is stuck (mode=${this.mode}). Reloading the page should clear it.`, 'warn');
       return;
     }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      try { _crcBeacon('mic-fail', { stage: 'no-getUserMedia' }); } catch {}
       toast('Mic needs HTTPS — switch to the https URL.', 'error');
       return;
     }
     if (!window.MediaRecorder) {
+      try { _crcBeacon('mic-fail', { stage: 'no-MediaRecorder' }); } catch {}
       toast('This browser does not support audio recording.', 'error');
       return;
     }
     try { console.info('[mic] start: cycle begin'); } catch {}
-    // Wake lock BEFORE the getUserMedia await. iOS suspends the JS
-    // context during the permission overlay; without a held wake lock
-    // it may treat the PWA as backgrounded and cold-relaunch on resume
-    // — the user perceives that as "I tapped mic and the app refreshed".
-    // iOS additionally REVOKES the lock when the overlay appears, so we
-    // re-acquire after each await crossing.
+    // Restored 2026-05-20 21:45 — origin/main (commit 6b6ae5c) mic
+    // flow was working smoothly per the user. My intermediate edits
+    // (move gum to be first await, drop wakeLock-pre-gum, drop the
+    // permissions.query + warmup-gum) introduced a perceptible
+    // delay before recording began. Restoring the proven flow:
+    //   1. wakeLock BEFORE gum (iOS otherwise treats the perm overlay
+    //      as a background → cold-relaunch on resume)
+    //   2. permissions.query — useful when state is already 'granted'
+    //      so we can skip the warmup gum (one fewer dialog)
+    //   3. early-return on 'denied' — actionable toast
+    //   4. warmup gum ({audio: true}, throwaway) before the real gum —
+    //      mitigates WebKit's UserMediaPermissionRequestProxy crash
+    //      on first grant
+    //   5. real gum with voice-mode constraints
+    // The mic-fail beacons stay in for diagnostics.
     this._tryAcquireWakeLock = async (reason) => {
       try {
         if (!navigator.wakeLock) return;
@@ -11402,12 +11604,6 @@ const Mic = {
       }
     };
     await this._tryAcquireWakeLock('pre-getUserMedia');
-    // First-grant warm-up workaround for WebKit bug (Apple thread/670322):
-    // iOS Safari PWAs can hard-crash immediately after the user taps Allow
-    // on the FIRST microphone-permission dialog. The crash traces to
-    // WebKit's UserMediaPermissionRequestProxy::doDefaultAction.
-    // Mitigation: issue a throwaway getUserMedia({audio:true}) first,
-    // release the tracks, THEN do the real request with our constraints.
     let _needsWarmup = true;
     let _permState = '';
     try {
@@ -11417,22 +11613,14 @@ const Mic = {
         if (_permState === 'granted') _needsWarmup = false;
       }
     } catch {}
-    // iOS Safari's Permissions API doesn't reliably report 'granted'
-    // for PWAs — it often returns 'prompt' even when the user has
-    // permanently allowed the mic for this origin. Cache our own
-    // "first grant succeeded once on this device" flag in
-    // localStorage so subsequent sessions skip the throwaway warm-up
-    // getUserMedia (which iOS otherwise treats as a fresh permission
-    // check and re-prompts the user). Cleared on any explicit denial.
+    try { _crcBeacon('mic-perm', { state: _permState, gumGranted: _lsGet('crc.mic.granted') === '1' }); } catch {}
     try {
       if (_lsGet('crc.mic.granted') === '1') _needsWarmup = false;
     } catch {}
-    // If iOS / the browser has cached a previous Deny, getUserMedia will
-    // throw NotAllowedError instantly with no prompt — the user thinks
-    // the mic is "broken forever." Surface actionable recovery steps.
     if (_permState === 'denied') {
       try { this.wakeLock && this.wakeLock.release(); } catch {}
       this.wakeLock = null;
+      try { _crcBeacon('mic-fail', { stage: 'perm-denied', permState: _permState }); } catch {}
       toast('Mic is blocked. On iPhone: Settings → Safari → Microphone → Allow (or tap the “aA” in Safari → Website Settings).', 'error');
       return;
     }
@@ -11440,16 +11628,12 @@ const Mic = {
       try {
         const warm = await navigator.mediaDevices.getUserMedia({ audio: true });
         try { warm.getTracks().forEach((t) => t.stop()); } catch {}
-        // First-grant succeeded — cache so we skip the warm-up on
-        // future sessions (iOS otherwise re-prompts every cold launch).
         try { _lsSet('crc.mic.granted', '1'); } catch {}
       } catch (e) {
         try { this.wakeLock && this.wakeLock.release(); } catch {}
         this.wakeLock = null;
-        // NotAllowedError = user tapped Deny (or it was cached). All
-        // other errors are NotFoundError (no mic hw), NotReadableError
-        // (mic in use by another app), SecurityError (insecure context).
         const name = (e && e.name) || '';
+        try { _crcBeacon('mic-fail', { stage: 'warmup-gum', err: name, msg: (e && e.message || '').slice(0, 200) }); } catch {}
         if (name === 'NotAllowedError') {
           try { _lsSet('crc.mic.granted', ''); } catch {}
           toast('Mic is blocked. iPhone: Settings → Safari → Microphone → Allow, then reload the PWA.', 'error');
@@ -11463,7 +11647,7 @@ const Mic = {
         return;
       }
     }
-    // Voice-mode constraints (echoCancellation/autoGainControl/
+    // Voice-mode constraints (echoCancellation / autoGainControl /
     // noiseSuppression) nudge iOS into the "PlayAndRecord" audio session,
     // which forces Bluetooth devices (AirPods) onto the HFP profile —
     // the only Bluetooth profile that carries microphone audio. Without
@@ -11482,6 +11666,7 @@ const Mic = {
       try { this.wakeLock && this.wakeLock.release(); } catch {}
       this.wakeLock = null;
       const name = (e && e.name) || '';
+      try { _crcBeacon('mic-fail', { stage: 'main-gum', err: name, msg: (e && e.message || '').slice(0, 200) }); } catch {}
       if (name === 'NotAllowedError') {
         try { _lsSet('crc.mic.granted', ''); } catch {}
         toast('Mic is blocked. iPhone: Settings → Safari → Microphone → Allow, then reload the PWA.', 'error');
@@ -11850,6 +12035,11 @@ $('#micBtn').addEventListener('pointerdown', () => { _micStateDump('pointerdown'
 $('#micBtn').addEventListener('touchend', () => { _micStateDump('touchend'); }, { passive: true });
 $('#micBtn').addEventListener('click', () => {
   _micStateDump('click');
+  // Server-side beacon so we can see mic taps in bridge.err.log without
+  // needing Safari devtools. User reported 2026-05-20 that the mic stopped
+  // working — this lets us tell whether the tap is reaching JS at all,
+  // before any getUserMedia / MediaRecorder action.
+  try { _crcBeacon('mic-tap', { mode: Mic.mode, ts: Date.now() }); } catch {}
   if (Mic.mode) Mic.stop(); else Mic.start();
 });
 

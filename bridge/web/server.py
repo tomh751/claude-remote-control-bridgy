@@ -984,6 +984,12 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
         # complete first sentence (or "Run finished" fallback). Adding
         # an ellipsis cap here would re-introduce the mid-thought cuts.
         body = summary_clean
+        # INFO-level log so the user (or future me chasing a "push not
+        # arriving" report) can see from bridge.err.log whether the push
+        # is being fanned out. push_mgr.send only warns on failure, so
+        # success was previously invisible.
+        log.info("Web Push send: project=%s title=%r body_chars=%d url=%s subs=%d",
+                 project, title, len(body), url, len(push_mgr._subs))
         try:
             await push_mgr.send(
                 title=title,
@@ -991,6 +997,7 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
                 url=url,
                 tag="",
             )
+            log.info("Web Push send OK (project=%s)", project)
         except Exception:
             log.exception("Web Push send failed")
 
@@ -4080,7 +4087,15 @@ p{font-size:14px;color:#9a8f80;margin:6px 0;max-width:340px}
     # Whitelist of known beacon `kind` values produced by the PWA
     # (bridge/web/static/app.js:_clientBeacon). Anything else is treated
     # as flood traffic and silently dropped.
-    _CLIENT_LOG_VALID_KINDS = frozenset({"boot", "error", "rejection", "pagehide", "log"})
+    _CLIENT_LOG_VALID_KINDS = frozenset({
+        "boot", "error", "rejection", "pagehide", "log",
+        # Mic diagnostic beacons added 2026-05-20 while chasing the
+        # "Mic is blocked" toast on iOS 18.7 PWA. Without these in the
+        # allowlist /api/client-log returns 204 silently and the beacons
+        # never reach bridge.err.log — wasted a debug cycle figuring
+        # that out, so the kinds live here next to the gate.
+        "mic-tap", "mic-start-entry", "mic-fail", "mic-perm",
+    })
 
     @app.post("/api/client-log")
     async def client_log(request: Request):
