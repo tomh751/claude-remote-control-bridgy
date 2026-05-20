@@ -762,20 +762,15 @@ a { color: var(--accent); text-decoration: none; }
 .tts-word {
   transition: background-color 80ms linear, color 80ms linear;
   -webkit-tap-highlight-color: transparent;
-  /* DO NOT set cursor:pointer or :active background here. iOS Safari
-     treats spans that LOOK like buttons (cursor:pointer + :active bg)
-     as tap targets, which means a long-press fires the callout menu
-     WITHOUT initiating text selection — the selection flashes and
-     disappears, leaving the menu pointing at nothing. The tap-to-
-     start-reading affordance still works via the pointerdown/
-     pointerup listeners attached in JS; we just don't visually
-     advertise it on these spans, so the user can long-press to
-     select prose like in any normal browser. Reported 2026-05-19. */
-}
-@media (hover: hover) and (pointer: fine) {
-  /* Desktop only: it's fine to hint clickability with a pointer
-     cursor since the iOS selection bug doesn't apply. */
-  .tts-word:hover { cursor: pointer; background: var(--accent-soft); border-radius: 3px; }
+  /* DO NOT set cursor:pointer here. The span carries no per-element
+     event listeners; tap-to-read is wired via a single `click` handler
+     delegated on .msg__body. iOS only synthesizes a click for short
+     taps — long-press → release stays in the selection path and never
+     reaches the handler. Adding cursor:pointer (or any pointer/touch
+     listener per-span) makes iOS treat each span as a tap target and
+     collapses the long-press selection on finger release, most
+     visibly on Hebrew / RTL text. Reported 2026-05-19, refined
+     2026-05-20. */
 }
 .tts-word--active {
   background: var(--accent-soft);

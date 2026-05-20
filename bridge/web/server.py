@@ -1348,28 +1348,45 @@ def build_web_app(*, cfg: Config, state: BridgeState, sessions: SessionManager) 
         ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl. Folder-name
         encoding (non-alphanumeric → `-`) is implemented once in
         `jsonl_helpers.find_session_dir`; this function just consumes it.
+
+        Skips `/ask` ghosts: claude-code spawned with
+        `--no-session-persistence` does NOT save the conversation, BUT
+        its title-generator still writes a one-line `ai-title` event to
+        a fresh jsonl. Those files (typically 90-110 bytes, containing
+        only `{"type":"ai-title",...}`) end up cluttering the user's
+        sessions menu as fake entries like "Pong response" when the user
+        ran `/ask ping`. We filter them by requiring a real user message
+        in the jsonl — `_session_label_from_jsonl` populates `first_user`
+        from `type: user` events, and any genuine session has at least
+        one. Reported 2026-05-20.
         """
         match = find_session_dir(cwd)
         if match is None:
             return []
         out: list[dict[str, Any]] = []
         sorted_files = sorted(match.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-        for i, f in enumerate(sorted_files):
+        # Render-position index is separate from file index so the most-
+        # recent badge lands on the first VISIBLE session, not the most
+        # recent file which might be a ghost we filtered.
+        rendered = 0
+        for f in sorted_files:
             if f.suffix != ".jsonl":
                 continue
             ai_title, first_user = _session_label_from_jsonl(f)
-            label = ai_title or first_user or "(no user message)"
+            # `/ask` ghost: ai-title present, but no user message ever
+            # written to the file. Skip — these aren't real sessions.
+            if not first_user:
+                continue
+            label = ai_title or first_user
             out.append({
                 "session_id": f.stem,
                 "preview": label[:140],
                 "ai_title": ai_title,
                 "first_user": first_user[:140],
                 "modified_at": int(f.stat().st_mtime),
-                # The first session by mtime is the most recently
-                # active one; mobile marks it visually so the user
-                # knows which row matches their live VSCode chat.
-                "is_most_recent": i == 0,
+                "is_most_recent": rendered == 0,
             })
+            rendered += 1
         return out
 
     @app.get("/api/sessions/{project}")
@@ -4056,14 +4073,46 @@ p{font-size:14px;color:#9a8f80;margin:6px 0;max-width:340px}
     # under sustained abuse.
     _CLIENT_LOG_MAX_BYTES = 10 * 1024 * 1024
 
+    # Bucket-eviction ceiling: prevents the per-IP rate-limit dict from
+    # growing without bound if many distinct IPs send beacons. With a
+    # 60s window, an entry older than that is dead weight.
+    _CLIENT_LOG_MAX_BUCKETS = 256
+    # Whitelist of known beacon `kind` values produced by the PWA
+    # (bridge/web/static/app.js:_clientBeacon). Anything else is treated
+    # as flood traffic and silently dropped.
+    _CLIENT_LOG_VALID_KINDS = frozenset({"boot", "error", "rejection", "pagehide", "log"})
+
     @app.post("/api/client-log")
     async def client_log(request: Request):
         # No CSRF / auth gate by design: this endpoint accepts data even
         # when the client is mid-crash and `sendBeacon` cannot attach
-        # custom headers. The rate-limit + size cap below are the
-        # abuse controls.
+        # custom headers (sendBeacon may set only Content-Type, so a
+        # custom header gate would break legitimate crash reports).
+        # Defense in depth instead:
+        #   1. per-IP rate-limit (token bucket, 60/min)
+        #   2. body size cap (8 KB)
+        #   3. JSON-shape validation — must parse + have a known `kind`
+        #   4. per-file size cap with rotation (10 MB)
+        #   5. bounded bucket dict (256 IPs) so a peer-IP flood can't
+        #      grow it without bound
         ip = request.client.host if request.client else "?"
         now = time.time()
+        # Evict the oldest fully-stale bucket if the table is full
+        # before inserting a new one — protects against a slowly
+        # rotating peer-IP flood.
+        if ip not in _CLIENT_LOG_BUCKETS and len(_CLIENT_LOG_BUCKETS) >= _CLIENT_LOG_MAX_BUCKETS:
+            cutoff = now - 60.0
+            for k in list(_CLIENT_LOG_BUCKETS.keys()):
+                b = _CLIENT_LOG_BUCKETS[k]
+                if not b or b[-1] < cutoff:
+                    del _CLIENT_LOG_BUCKETS[k]
+                    if len(_CLIENT_LOG_BUCKETS) < _CLIENT_LOG_MAX_BUCKETS:
+                        break
+            if len(_CLIENT_LOG_BUCKETS) >= _CLIENT_LOG_MAX_BUCKETS:
+                # Table still full — every bucket is currently active.
+                # Drop the request silently rather than evicting a live
+                # peer's record.
+                return Response(status_code=204)
         bucket = _CLIENT_LOG_BUCKETS.setdefault(ip, [])
         # Drop entries older than 60s.
         cutoff = now - 60.0
@@ -4080,6 +4129,18 @@ p{font-size:14px;color:#9a8f80;margin:6px 0;max-width:340px}
             if len(raw) > 8 * 1024:
                 raw = raw[: 8 * 1024]
             text = raw.decode("utf-8", errors="replace")
+            # Shape gate: must parse as a JSON object with a known
+            # `kind`. Rejects curl-style "POST arbitrary text" flooding
+            # without breaking the legitimate sendBeacon path (which
+            # always posts a JSON object).
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                return Response(status_code=204)
+            if not isinstance(parsed, dict):
+                return Response(status_code=204)
+            if parsed.get("kind") not in _CLIENT_LOG_VALID_KINDS:
+                return Response(status_code=204)
             log.info("client-log %s", text)
             try:
                 stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

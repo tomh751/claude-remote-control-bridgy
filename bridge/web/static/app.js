@@ -463,63 +463,41 @@ const TTS = {
             const span = document.createElement('span');
             span.className = 'tts-word';
             span.textContent = part;
-            // Tap detection that coexists with iOS's native long-press
-            // text selection. A `click` listener fires on EVERY tap,
-            // including long-presses that the user meant as
-            // "select this text to copy" — which is exactly the bug
-            // the user reported ("can't copy because tap starts
-            // reading"). Use a pointerdown/pointerup pair instead:
-            //   - long press (>350 ms) → ignore (iOS shows selection)
-            //   - drag (movement >8 px) → ignore (scroll gesture)
-            //   - text already selected → ignore (user is highlighting)
-            // Only a clean short tap reaches _handleWordClick.
-            let _pdTs = 0, _pdX = 0, _pdY = 0;
-            span.addEventListener('pointerdown', (e) => {
-              _pdTs = Date.now();
-              _pdX = e.clientX; _pdY = e.clientY;
-            }, { passive: true });
-            span.addEventListener('pointerup', (e) => {
-              const dt = Date.now() - _pdTs;
-              if (dt > 350) return;
-              const dx = Math.abs(e.clientX - _pdX);
-              const dy = Math.abs(e.clientY - _pdY);
-              if (dx > 8 || dy > 8) return;
-              try {
-                const sel = window.getSelection && window.getSelection();
-                if (sel && sel.toString && sel.toString().length > 0) return;
-              } catch {}
-              // Stop propagation BEFORE invoking the handler so an
-              // exception in _handleWordClick still leaves the bubble
-              // un-bubbled. Also prevent default so the synthetic
-              // click that some engines fire after pointerup doesn't
-              // re-trigger anything.
-              e.stopPropagation();
-              e.preventDefault();
-              TTS._handleWordClick(span);
-            });
-            // Defensive: swallow any click event that lands on the
-            // span (mouse click, programmatic, or iOS synthetic-click
-            // chain). The pointerup path is the only legitimate
-            // trigger; everything else should be a no-op.
-            //
-            // EXCEPTION: if the user has just made a text selection
-            // (long-press → drag handles), iOS fires a final click as
-            // it dismisses the callout. preventDefaulting it can cause
-            // iOS to retract the selection in some builds. Bail out
-            // when a selection is live so highlight→copy works.
-            span.addEventListener('click', (e) => {
-              try {
-                const sel = window.getSelection && window.getSelection();
-                if (sel && sel.toString && sel.toString().length > 0) return;
-              } catch {}
-              e.stopPropagation();
-              e.preventDefault();
-            });
-            frag.appendChild(span);
+            // No per-span event listeners. Tap-to-read is delegated on
+            // the body via a single `click` handler (see below). Earlier
+            // attempts wired pointerdown/pointerup PER SPAN which made
+            // iOS Safari treat the span as a tap target and dismiss
+            // long-press selection on release. A click handler on the
+            // BODY is different — iOS routes synthetic clicks only for
+            // short taps, not for long-press → release, so the two
+            // gestures don't collide.
             spans.push(span);
+            frag.appendChild(span);
+            continue;
           }
         }
         parent.replaceChild(frag, tn);
+      }
+      // Click delegation at the body level. Long-press → release on
+      // iOS does NOT synthesize a click (selection wins), so this
+      // handler only fires for short taps. We additionally bail when
+      // the user has an active text selection — that's iOS firing a
+      // synthetic click as it dismisses the callout, which shouldn't
+      // start TTS.
+      if (!body.__ttsClickDelegated) {
+        body.__ttsClickDelegated = true;
+        body.addEventListener('click', (e) => {
+          const s = e.target && e.target.closest && e.target.closest('.tts-word');
+          if (!s || !body.contains(s)) return;
+          try {
+            const sel = window.getSelection && window.getSelection();
+            if (sel) {
+              if (sel.toString && sel.toString().length > 0) return;
+              if (sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) return;
+            }
+          } catch {}
+          TTS._handleWordClick(s);
+        });
       }
     }
     return spans;
@@ -4150,6 +4128,46 @@ function _resolveBlockDir(text) {
 // of an assistant message kept rendering LTR while paragraph 1
 // rendered RTL, despite all three having identical structure and
 // dir="rtl" attribute. Inline style fixed it. Belt-and-braces.
+// Arrow / chevron characters whose visual direction is the OPPOSITE of
+// their RTL reading flow. In a Hebrew paragraph, "step A → step B" reads
+// right-to-left, but `→` is a non-bidi character that keeps pointing
+// right regardless of paragraph direction — which contradicts the
+// reading order. We swap them so the arrow visually flows the same way
+// the eye scans. Code blocks are not walked, so `=>`, `->`, `<-` in
+// fenced code stay literal.
+const _RTL_ARROW_SWAP = {
+  '→': '←', // → ↔ ←
+  '←': '→', // ← ↔ →
+  '⇒': '⇐', // ⇒ ↔ ⇐
+  '⇐': '⇒', // ⇐ ↔ ⇒
+  '➜': '⬅', // ➜ ↔ ⬅
+  '»': '«', // » ↔ «
+  '«': '»', // « ↔ »
+};
+const _RTL_ARROW_RE = /[→←⇒⇐➜»«]/g;
+
+function _mirrorArrowsInRtlText(el) {
+  // Walk only text nodes — skip <code>, <pre>, and <a> children so
+  // copy-able tokens (URLs, code) stay byte-identical to what claude
+  // produced.
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      let p = n.parentNode;
+      while (p && p !== el) {
+        const tag = p.nodeName;
+        if (tag === 'CODE' || tag === 'PRE' || tag === 'A') return NodeFilter.FILTER_REJECT;
+        p = p.parentNode;
+      }
+      return _RTL_ARROW_RE.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const n of nodes) {
+    n.nodeValue = n.nodeValue.replace(_RTL_ARROW_RE, (c) => _RTL_ARROW_SWAP[c] || c);
+  }
+}
+
 function _enforceBlockDir(root) {
   if (!root || !root.querySelectorAll) return;
   const selector = 'p, li, blockquote, h1, h2, h3, h4, h5, h6';
@@ -4159,6 +4177,7 @@ function _enforceBlockDir(root) {
       el.dir = 'rtl';
       el.style.direction = 'rtl';
       el.style.textAlign = 'right';
+      _mirrorArrowsInRtlText(el);
     } else if (d === 'ltr') {
       el.dir = 'ltr';
       el.style.direction = 'ltr';
