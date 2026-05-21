@@ -1966,20 +1966,18 @@ function _ensureChatpane(tab) {
   // hidden the moment a real chatpane exists.
   chat.setAttribute('data-has-real-pane', '1');
   tab._chatpane = pane;
-  // CRITICAL: mark the tab hydrated the moment its pane exists. This
-  // closes the lazy-hydrate double-render race that code-review caught
-  // 2026-05-17: a WS frame for a never-visited tab (e.g. a still-live
-  // run listed in the `hello` reattach, or a server-initiated trigger
-  // for a different tab) would call `Chat.beginRun → _paneFor →
-  // _ensureChatpane` and start rendering events. Without setting
-  // `_hydrated` here, the subsequent `switchTab → _ensureChatpaneAndReplay`
-  // would still see `_hydrated=false`, run `_replaySessionInto`, and
-  // append the entire session jsonl below the already-rendered live
-  // events — every message visible twice. The flag must therefore be
-  // set wherever a pane is born; `_ensureChatpaneAndReplay`'s gate
-  // checks it BEFORE calling here so the active-boot path still
-  // replays correctly on its first visit.
-  tab._hydrated = true;
+  // Do NOT set `_hydrated` here. Pane creation and history replay are
+  // separate concerns: a WS frame for an inactive tab (media event,
+  // delta from a still-live run, etc.) calls `_paneFor → _ensureChatpane`
+  // BEFORE the user has switched to that tab. If we marked the tab
+  // hydrated here, the subsequent `switchTab → _ensureChatpaneAndReplay`
+  // would bail out — leaving the user staring at only the live-streamed
+  // frames with no historical context above (reported 2026-05-21: user
+  // saw only a video response in a tab, chat history above missing
+  // until PWA relaunch). Replay handles the double-render race by
+  // clearing pre-existing `.msg` elements before re-rendering, guarded
+  // on `_activeRuns` being empty so an in-flight live bubble doesn't
+  // get destroyed mid-stream.
   return pane;
 }
 
@@ -2039,6 +2037,17 @@ function createTab(project, opts) {
   return tab;
 }
 
+// Set true for the duration of a tab switch so the `input` listener
+// below doesn't write the in-flight textarea contents into the NEW
+// tab's `draft` on a late-firing event (iOS Safari can dispatch a
+// synthesized `input` event after a programmatic value-set in certain
+// IME / autocorrect modes). Without the guard, that late event would
+// overwrite the newly-restored draft of the destination tab with
+// whatever leftover text was visible from the source tab — looking
+// to the user like "my typed text follows me across tabs."
+// Reported 2026-05-21.
+let _switchInFlight = false;
+
 // Snapshot the current textarea contents into the active tab's `draft`
 // field so switching away doesn't lose half-typed text and switching back
 // restores it. Called right before any tab switch / create / close.
@@ -2052,11 +2061,20 @@ function _captureActiveDraft() {
 }
 
 // Restore the active tab's draft into the textarea (or clear if none).
+// Always assigns — even if the new value matches the current one — so
+// any stale text from the outgoing tab's textarea state is forcibly
+// replaced. Defensive against the "text follows me across tabs" bug
+// reported 2026-05-21.
 function _restoreActiveDraft() {
   const tab = getActiveTab();
   const inputEl = $('#input');
   if (!inputEl) return;
-  inputEl.value = (tab && tab.draft) || '';
+  const next = (tab && tab.draft) || '';
+  // Force re-assign: setting to '' first then to `next` is enough to
+  // overwrite any IME composition or autocorrect-buffered text on
+  // iOS Safari that a plain `value = next` would silently keep.
+  inputEl.value = '';
+  inputEl.value = next;
   try { autosizeInput(); } catch {}
 }
 
@@ -2070,6 +2088,7 @@ function switchTab(tabId) {
   // updates the crumb tag; if we crash, the last crumb's `info`
   // reads like "step=apply" or "step=render", which is enough.
   const _ss = (s) => { try { _crcCrumb('switchStep', s); } catch {} };
+  _switchInFlight = true;
   try {
     // Save what the user has typed on the outgoing tab so it isn't lost.
     _ss('capture'); _captureActiveDraft();
@@ -2113,6 +2132,11 @@ function switchTab(tabId) {
     // the targeted beacon (which has step context) AND the global
     // one (which may show line/col on browsers that aren't iOS).
     throw e;
+  } finally {
+    // Clear the guard on the next tick — synchronous code is done,
+    // but any input events synthesized during the switch should
+    // settle within the current macrotask boundary.
+    setTimeout(() => { _switchInFlight = false; }, 0);
   }
 }
 
@@ -2731,51 +2755,41 @@ function applyActiveTabUi() {
   renderAgentChip();
   _restoreActiveDraft();
   // FORCE iOS Safari to repaint the chat viewport on every tab switch,
-  // regardless of whether the user was at the bottom. The
-  // translateZ(0) GPU-layer promotion on .chatpane[data-active="true"]
-  // helps but isn't always sufficient — switching to a tab while
-  // scrolled UP can still leave a black band above the visible content
-  // until the user scrolls. The bulletproof trick is to nudge
-  // scrollTop by 1px and read offsetHeight (forces synchronous layout)
-  // so iOS commits a fresh paint. Done BEFORE the scrollToBottom call
-  // so the nudge fires even when the user wasn't following bottom.
+  // and unconditionally pin to the bottom of the newly active pane.
+  // The 1px sync nudge + offsetHeight read forces a synchronous layout
+  // (fixes the "black band above content" bug). The OLD version then
+  // scheduled a rAF to RESTORE the previous scrollTop — but the
+  // previous scrollTop was from a different tab's pane, so we'd land
+  // mid-history. On tab switch the user's intent is always "show me
+  // the latest message in THIS tab" — reset followBottom and pin
+  // unconditionally for the first 600ms so async replay content +
+  // late-loading images both land us at the true bottom. After 600ms
+  // gate on _isFollowingBottom so a user who starts scrolling up to
+  // read history isn't yanked back. Reported 2026-05-21.
   const scrollEl = Chat.scrollEl;
   if (scrollEl) {
-    const savedTop = scrollEl.scrollTop;
+    scrollEl.scrollTop = scrollEl.scrollTop + 1;
     void scrollEl.offsetHeight;
-    scrollEl.scrollTop = savedTop + 1;
-    requestAnimationFrame(() => {
-      scrollEl.scrollTop = savedTop;
-    });
   }
-  // Snap scroll to bottom of newly visible pane.
+  _isFollowingBottom = true;
   Chat.scrollToBottom(true);
-  // Re-pin after a delay to catch async layout changes that happen AFTER
-  // the two-rAF pin inside scrollToBottom. The common culprit is images
-  // inside the latest assistant message: they have height 0 at pin time,
-  // so the bottom is computed without them, then they load and push the
-  // latest message slightly above the scroll edge. Repeat the pin a few
-  // times over ~600ms so the user lands at the true bottom even if
-  // images, tool cards, or other lazy content arrive late. Skipped if
-  // the user actually scrolled away in the meantime. Reported
-  // 2026-05-19: switching tabs sometimes lands a few hundred px above
-  // the latest message.
-  const pinIfFollowing = () => {
-    if (!_isFollowingBottom) return;
+  const pinToBottom = () => {
     const el = Chat.scrollEl;
     if (el) el.scrollTop = el.scrollHeight;
   };
-  setTimeout(pinIfFollowing, 80);
-  setTimeout(pinIfFollowing, 240);
-  setTimeout(pinIfFollowing, 600);
+  setTimeout(pinToBottom, 80);
+  setTimeout(pinToBottom, 240);
+  setTimeout(pinToBottom, 600);
+  // Tail pin — only fires if the user hasn't scrolled away by now.
+  setTimeout(() => { if (_isFollowingBottom) pinToBottom(); }, 1200);
   // Also re-pin on the next image-load event in the active pane, which
   // catches replayed-history images that were loading off-screen.
   const _activeForImgWatch = getActiveTab();
   if (_activeForImgWatch && _activeForImgWatch._chatpane) {
     _activeForImgWatch._chatpane.querySelectorAll('img').forEach((img) => {
       if (img.complete) return;
-      img.addEventListener('load', pinIfFollowing, { once: true, passive: true });
-      img.addEventListener('error', pinIfFollowing, { once: true, passive: true });
+      img.addEventListener('load', pinToBottom, { once: true, passive: true });
+      img.addEventListener('error', pinToBottom, { once: true, passive: true });
     });
   }
 }
@@ -3636,7 +3650,8 @@ function closeLightbox() {
 }
 (function _setupLightboxZoom() {
   const img = $('#lightboxImg');
-  if (!img) return;
+  const lb = $('#lightbox');
+  if (!img || !lb) return;
 
   // Pinch + pan implemented purely with touch events (NOT iOS
   // GestureEvent). The gesture-event API was unreliable in this
@@ -3645,6 +3660,14 @@ function closeLightbox() {
   // With 2-finger touchstart capturing the initial distance + midpoint,
   // and touchmove recomputing distance, we get pinch on every browser
   // with consistent behavior.
+  //
+  // Listeners are bound to the WHOLE LIGHTBOX (not just #lightboxImg)
+  // because iOS Safari dispatches each finger's touchstart on the
+  // element directly under that finger. If the user pinches with one
+  // finger on the dark backdrop, only ONE touchstart hits #lightboxImg
+  // (touches.length===1); the 2-finger branch never fires. Binding to
+  // the lightbox container catches every finger no matter where it
+  // lands, so pinch works edge-to-edge.
 
   // Active gesture state. Mutually exclusive: at any moment we're either
   // in a pinch (2 fingers), a pan (1 finger), or idle.
@@ -3657,7 +3680,7 @@ function closeLightbox() {
     return Math.hypot(dx, dy);
   }
 
-  img.addEventListener('touchstart', (e) => {
+  lb.addEventListener('touchstart', (e) => {
     // 2-finger touch = pinch start. Always wins over pan.
     if (e.touches.length === 2) {
       e.preventDefault();
@@ -3710,7 +3733,7 @@ function closeLightbox() {
     if (_lbZoom.scale > 1) _lbSetTransition(false);
   }, { passive: false });
 
-  img.addEventListener('touchmove', (e) => {
+  lb.addEventListener('touchmove', (e) => {
     // Pinch in progress — recompute scale + translate so the pinch
     // midpoint stays anchored under the fingers.
     if (e.touches.length === 2 && pinch) {
@@ -3737,14 +3760,19 @@ function closeLightbox() {
     }
   }, { passive: false });
 
-  img.addEventListener('touchend', (e) => {
+  lb.addEventListener('touchend', (e) => {
     if (e.touches.length === 0) {
       pinch = null;
       pan = null;
+      // Hold the gesture-suppression flag long enough for the synthetic
+      // `click` iOS dispatches after a multi-touch to be swallowed by
+      // the lightbox close handler — 50ms was too short on real
+      // hardware (click sometimes arrives ~200-300ms post-touchend) and
+      // a pinch occasionally collapsed straight back into a close.
       setTimeout(() => {
         _lbZoom.gestured = false;
         _lbSetTransition(true);
-      }, 50);
+      }, 350);
       return;
     }
     if (e.touches.length === 1) {
@@ -3760,7 +3788,7 @@ function closeLightbox() {
   });
   // Cancel handler — if iOS interrupts the gesture (call, notification,
   // etc.) reset state cleanly so the next touch starts fresh.
-  img.addEventListener('touchcancel', () => {
+  lb.addEventListener('touchcancel', () => {
     pinch = null;
     pan = null;
     _lbZoom.gestured = false;
@@ -6777,6 +6805,17 @@ const Chat = {
                 tab.running = false;
                 if (tab._activeRuns) tab._activeRuns.clear();
               } else {
+                // If tab.running was ALREADY true before this hello, the
+                // WS just reconnected mid-run — deltas claude emitted
+                // between ws.close and ws.open went to the dropped
+                // queue and are now lost. Flag the tab so the upcoming
+                // run_finished handler backfills the missing chunk from
+                // jsonl instead of discarding events (reported
+                // 2026-05-21: assistant text was incomplete on resume
+                // until the user refreshed the page).
+                if (tab.running) {
+                  tab._lossyRun = true;
+                }
                 tab.running = true;
               }
             }
@@ -6954,9 +6993,17 @@ const Chat = {
         // that by fetching once with the current `since` and just
         // taking the new tail_offset (events themselves are discarded
         // here — they've already been rendered live via WS).
+        //
+        // ALSO: if the tab is flagged `_lossyRun` (the hello handler
+        // saw a WS reconnect while a run was still in flight), the
+        // live container is missing the chunk of text claude emitted
+        // during the WS-down window. Backfill from jsonl instead of
+        // discarding events: strip every node after the last user
+        // bubble and re-render the turn via `_appendLiveEvents`.
         if (tid) {
           const tab = getTab(tid);
-          if (tab && tab._wsRunInFlight) {
+          const needsLossyBackfill = !!(tab && tab._lossyRun);
+          if (tab && (tab._wsRunInFlight || needsLossyBackfill)) {
             const proj = tab.project;
             const sid = tab.sessionId;
             const since = tab.sessionTailOffset || 0;
@@ -6966,13 +7013,26 @@ const Chat = {
                 { headers: CSRF_HEADERS },
               ).then((r) => r.ok ? r.json() : null)
                .then((data) => {
+                 if (needsLossyBackfill) {
+                   tab._lossyRun = false;
+                   const evs = (data && data.events) || [];
+                   if (evs.length) {
+                     try { _lossyBackfillTurn(tab, proj, evs); } catch (e) {
+                       try { console.warn('[lossy-backfill] failed:', e && e.message); } catch {}
+                     }
+                   }
+                 }
                  if (data && typeof data.tail_offset === 'number') {
                    tab.sessionTailOffset = data.tail_offset;
                  }
                  tab._wsRunInFlight = false;
                })
-               .catch(() => { tab._wsRunInFlight = false; });
+               .catch(() => {
+                 if (needsLossyBackfill) tab._lossyRun = false;
+                 tab._wsRunInFlight = false;
+               });
             } else {
+              if (needsLossyBackfill) tab._lossyRun = false;
               tab._wsRunInFlight = false;
             }
           }
@@ -9117,6 +9177,17 @@ async function _replaySessionInto(tab, project, sessionId) {
     toast('Past chat is empty.', 'info');
     return;
   }
+  // If a WS frame already built this pane and rendered events into it
+  // (typically a media frame or live delta arriving for an inactive
+  // tab BEFORE the user switched to it), wipe those bubbles before we
+  // replay — otherwise jsonl re-emits them and the user sees every
+  // event twice. Skip the clear when an active run is in flight: its
+  // assistant container is registered in `_activeRuns` and destroying
+  // it would orphan the next live delta.
+  const hasActiveRun = !!(tab._activeRuns && tab._activeRuns.size > 0);
+  if (pane && !hasActiveRun) {
+    try { pane.querySelectorAll('.msg').forEach((n) => n.remove()); } catch {}
+  }
   // Hide any synthetic compact prompts + the streamed summary that
   // followed them. The boundary divider still drops in between the
   // pre- and post-compact halves; the user just doesn't see the
@@ -9383,6 +9454,66 @@ const _COMPACT_PROMPT_SIG = 'Please compact this conversation';
 // Walk a poll batch and drop the synthetic compact-prompt user event,
 // every assistant_text / tool_use / tool_result / tool_error event that
 // follows it (the streamed summary), and the terminating compact_complete
+// Replay the latest turn from jsonl into a tab whose live WS stream
+// missed events during a mid-run reconnect. Strips every node after
+// the last user bubble (the partial assistant container the live
+// stream built) and re-renders via `_appendLiveEvents`. Set on
+// `tab._lossyRun` by the hello handler when the WS reconnects with
+// a still-running tab — see the comment on the run_finished case.
+function _lossyBackfillTurn(tab, project, events) {
+  if (!tab || !tab._chatpane || !Array.isArray(events) || !events.length) return;
+  const pane = tab._chatpane;
+  // Remove everything after the last user bubble — the partial
+  // assistant container the live stream built, plus any stray
+  // status/system rows the session poll may have inserted in the
+  // meantime. _appendLiveEvents will re-create them from jsonl.
+  const userBubbles = pane.querySelectorAll('.msg--user');
+  const lastUser = userBubbles[userBubbles.length - 1];
+  if (lastUser) {
+    let n = lastUser.nextElementSibling;
+    while (n) {
+      const x = n;
+      n = n.nextElementSibling;
+      try { x.remove(); } catch {}
+    }
+  }
+  // Drop any tracked active-run entries for this tab — the live
+  // containers they pointed at are gone, and leaving the map populated
+  // would keep tab.running stuck at true (runs.size > 0).
+  if (tab._activeRuns) {
+    for (const run of tab._activeRuns.values()) {
+      if (run.cycler) { try { clearInterval(run.cycler); } catch {} run.cycler = null; }
+      if (run.spinnerTimer) { try { run.spinnerTimer(); } catch {} run.spinnerTimer = null; }
+    }
+    tab._activeRuns.clear();
+  }
+  // Also clear any open synthetic run on the live-replay path so the
+  // backfill starts fresh instead of accumulating onto a stale entry.
+  _liveTurnRunIds.set(tab.id, null);
+  // Render the events. _appendLiveEvents will create a fresh
+  // synthetic-runId container for the assistant text; the user event
+  // at the head of the batch dedupes against the surviving user
+  // bubble (line check inside _appendLiveEvents), so we don't get a
+  // second user message.
+  _appendLiveEvents(tab, project, events);
+  // _appendLiveEvents leaves the synthetic runId "open" with the 4s
+  // idle timer as its only close path. The run is actually DONE
+  // (we're called from run_finished), so close it now — otherwise
+  // the user sees the kawaii + status word spinning for ~4s on an
+  // already-finished turn.
+  const openId = _liveTurnRunIds.get(tab.id);
+  if (openId != null) {
+    if (tab._liveIdleCloseTimer) {
+      try { clearTimeout(tab._liveIdleCloseTimer); } catch {}
+      tab._liveIdleCloseTimer = null;
+    }
+    try { Chat.flushDeferredRender(openId, tab.id); } catch {}
+    try { Chat.finishRun(project, openId, 'done', '', tab.id); } catch {}
+    _liveTurnRunIds.set(tab.id, null);
+  }
+  try { Chat.scrollToBottom(true); } catch {}
+}
+
 // marker. Returns a new array; never mutates the input.
 function _stripCompactSpan(events) {
   if (!Array.isArray(events) || !events.length) return events;
@@ -10534,6 +10665,20 @@ function updateSendButton() {
 let _sendTapHandled = false;
 let _sendTapResetTimer = 0;
 function _runSendAction() {
+  // `/ask <question>` MUST bypass the queue gate. updateSendButton flips
+  // the send button to `composer__send--queue` whenever `running &&
+  // hasText`, and the queue branch below short-circuits ALL routing —
+  // so without this pre-check a /ask typed during a live run would be
+  // queued (and later drained as a regular prompt by
+  // _drainNextQueuedPrompt) instead of spawning the parallel adhoc
+  // claude. Reported 2026-05-21: "/ask while running just queues."
+  // Fix lives here rather than below because the queue gate has to
+  // see /ask BEFORE deciding whether to queue.
+  if (sendBtn.classList.contains('composer__send--queue') &&
+      input && /^\/ask\s+/i.test(input.value.trim())) {
+    sendPrompt();
+    return;
+  }
   if (sendBtn.classList.contains('composer__send--queue')) {
     _enqueueCurrentPrompt();
     return;
@@ -10576,6 +10721,15 @@ function _runSendAction() {
   const running = !!(tab && tab.running);
   const hasText = !!(input && input.value.trim());
   const hasAttachments = !!(tab && tab._attachments && tab._attachments.length);
+  // `/ask <question>` bypasses the per-tab session lock by design —
+  // it spawns a parallel adhoc claude run with --no-session-persistence,
+  // so the user can ask side-questions while a long main run is in
+  // flight. Don't queue it; route straight through sendPrompt so its
+  // existing `/ask` handler dispatches the `ask` command frame.
+  if (running && hasText && /^\/ask\s+/i.test(input.value.trim())) {
+    sendPrompt();
+    return;
+  }
   if (running && (hasText || hasAttachments)) { _enqueueCurrentPrompt(); return; }
   if (running) return;
   sendPrompt();
@@ -10750,18 +10904,31 @@ function _drainNextQueuedPrompt(tab) {
   // composer read entirely, so input.value is untouched here.
   tab._attachments = next.attachments || [];
   try {
-    const ok = sendPrompt({ text: next.text || '' });
+    // Pass the owning tab explicitly so sendPrompt routes the WS
+    // frame + the new user bubble to THIS tab, not whichever tab
+    // happens to be foregrounded right now. Without `opts.tab`,
+    // a queued message in tab A would leak into tab B if tab B
+    // was active at run_finished time. Reported 2026-05-21.
+    const ok = sendPrompt({ text: next.text || '', tab });
     if (ok) {
       // sendPrompt only clears the composer when reading from
       // input.value (opts.text==null). Drain passes opts.text
-      // explicitly, so we restore the user's pre-drain draft +
-      // attachments here. If they hadn't typed anything new, that's
-      // an empty composer — same end state as a normal send.
+      // explicitly, so the composer was never touched — no restore
+      // needed. Restore tab A's attachments (we swapped them on the
+      // line above), but ONLY touch input.value / tab.draft when
+      // tab A is currently active: otherwise draftBefore is the
+      // OTHER tab's typing, and writing it into tab.draft would
+      // poison tab A's draft so that next time the user switched
+      // into tab A they'd see the other tab's text in the composer
+      // (reported 2026-05-21 as "composer leaks across tabs" from
+      // the queue-drain path).
       tab._attachments = attachmentsBefore;
-      if (input) input.value = draftBefore;
-      tab.draft = draftBefore;
-      try { autosizeInput(); } catch {}
-      try { renderAttachments(); } catch {}
+      if (tab === getActiveTab()) {
+        if (input) input.value = draftBefore;
+        tab.draft = draftBefore;
+        try { autosizeInput(); } catch {}
+        try { renderAttachments(); } catch {}
+      }
       // Drop the queued bubble for the message we just shipped — the
       // new user bubble Chat.pushUser appended is its replacement.
       try { next._node?.remove(); } catch {}
@@ -10783,26 +10950,34 @@ function _drainNextQueuedPrompt(tab) {
       try { Chat.scrollToBottom(true); } catch {}
     } else {
       // Send failed — push the entry back so the user doesn't lose it.
-      // Restore the pre-drain composer so they can retry manually.
+      // Restore the pre-drain composer ONLY if tab A is the active
+      // tab; otherwise draftBefore is the active tab's text, and
+      // writing it into tab A's draft would leak (see same guard
+      // above in the ok branch).
       tab._queue.unshift(next);
       tab._attachments = attachmentsBefore;
-      if (input) input.value = draftBefore;
-      tab.draft = draftBefore;
-      try { autosizeInput(); } catch {}
-      try { renderAttachments(); } catch {}
+      if (tab === getActiveTab()) {
+        if (input) input.value = draftBefore;
+        tab.draft = draftBefore;
+        try { autosizeInput(); } catch {}
+        try { renderAttachments(); } catch {}
+      }
       try { _persistTabs(); } catch {}
     }
     return !!ok;
   } catch (e) {
     try { console.error('[queue drain]', e); } catch {}
     // Same recovery as the !ok branch — push the entry back and
-    // restore the user's typing state.
+    // restore the user's typing state if and only if tab A is the
+    // active tab (see same guard above).
     tab._queue.unshift(next);
     tab._attachments = attachmentsBefore;
-    if (input) input.value = draftBefore;
-    tab.draft = draftBefore;
-    try { autosizeInput(); } catch {}
-    try { renderAttachments(); } catch {}
+    if (tab === getActiveTab()) {
+      if (input) input.value = draftBefore;
+      tab.draft = draftBefore;
+      try { autosizeInput(); } catch {}
+      try { renderAttachments(); } catch {}
+    }
     return false;
   }
 }
@@ -10877,7 +11052,10 @@ input.addEventListener('input', () => {
   // every keystroke so the icon tracks the textarea state live.
   updateSendButton();
   // Keep the per-tab draft in sync so we don't lose typing if the user
-  // backgrounds the app and iOS reloads it later.
+  // backgrounds the app and iOS reloads it later. Suppressed during a
+  // tab switch so a late iOS-Safari `input` event doesn't smear the
+  // outgoing tab's text into the incoming tab's draft.
+  if (_switchInFlight) return;
   const tab = getActiveTab();
   if (tab) tab.draft = input.value || '';
 });
@@ -11081,6 +11259,12 @@ form.addEventListener('submit', (e) => {
   const running = !!(tab && tab.running);
   const hasText = !!(input && input.value.trim());
   const hasAttachments = !!(tab && tab._attachments && tab._attachments.length);
+  // `/ask <question>` bypasses the per-tab session lock — see the
+  // matching short-circuit in _runSendAction for the rationale.
+  if (running && hasText && /^\/ask\s+/i.test(input.value.trim())) {
+    sendPrompt();
+    return;
+  }
   if (running && (hasText || hasAttachments)) {
     _enqueueCurrentPrompt();
     return;
@@ -11118,10 +11302,15 @@ function sendPrompt(opts) {
   //                     regenerate, which removes the prior assistant
   //                     bubble and re-streams a new one in place — the
   //                     existing user bubble is reused.
+  // opts.tab          — explicit destination tab. Used by the queue
+  //                     drain so a message queued in tab A doesn't get
+  //                     misrouted to whatever tab happens to be active
+  //                     when its run finishes. Falls back to the active
+  //                     tab when omitted (the normal compose path).
   opts = opts || {};
   const rawText = opts.text != null ? opts.text : input.value;
   const text = _normalizeSmartPunctuation(rawText.trim());
-  const tab = getActiveTab();
+  const tab = opts.tab || getActiveTab();
   const attachments = tab ? (tab._attachments || []) : [];
   if (!text && !attachments.length) return;
   // If the message is JUST a slash command we recognize, route it through
@@ -11239,6 +11428,13 @@ function sendPrompt(opts) {
     effort: State.effort,
     attachments: attachmentsPayload,
     force_session_id: force,
+    // Fallback resume hint. The server's in-memory tab→session_id map
+    // is wiped on bridge restart, so without this the next prompt the
+    // user fires (queued OR fresh) spawns a brand-new claude session
+    // and the conversation forks off whatever the user was just
+    // reading. `tab.sessionId` lives in localStorage, so it survives
+    // restarts; the server only honors it when its own record is None.
+    client_session_id: (tab.sessionId || null),
     model: tab.model || '',
     agent: tab.agent || '',
   });

@@ -50,13 +50,24 @@ def find_session_dir(cwd: Path) -> Path | None:
         return None
     target = _encode_cwd(cwd)
     target_lc = target.lower()
+    # Prefer exact match. The `endswith` fallback handles minor encoding
+    # drift (Claude Code prepends an extra leading `-` on some Windows
+    # paths), but require a `-` separator boundary so projects whose
+    # encoding is a strict suffix of another's (e.g. `foo` would otherwise
+    # match the tail of `bar-foo`) don't collide and silently resolve to
+    # the wrong project's session store. Reported in audit 2026-05-21.
+    exact: Path | None = None
+    fallback: Path | None = None
     for d in _CLAUDE_SESSIONS_ROOT.iterdir():
         if not d.is_dir():
             continue
         name_lc = d.name.lower()
-        if name_lc == target_lc or name_lc.endswith(target_lc):
-            return d
-    return None
+        if name_lc == target_lc:
+            exact = d
+            break
+        if name_lc.endswith("-" + target_lc):
+            fallback = d
+    return exact or fallback
 
 
 # Long tool_result outputs (file dumps, bash logs) are typically

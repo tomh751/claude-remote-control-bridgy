@@ -4333,6 +4333,34 @@ p{font-size:14px;color:#9a8f80;margin:6px 0;max-width:340px}
             ],
         ))
 
+        # Re-attach every active sink to THIS connection's outbound queue.
+        # Without this, a WS reconnect mid-run leaves the run's sink wired
+        # to the dropped connection's (now-orphaned) queue — `run_finished`
+        # and trailing deltas land there with no reader, and the new WS
+        # client's composer stays stuck on "still working" forever even
+        # though Claude has finished. (Push notifications still fire because
+        # they're a separate channel, which is why the chat itself looks
+        # complete.) Bridgy is single-user, so the last-connecting WS
+        # legitimately owns the live stream — stealing it from any prior
+        # half-dead connection is the desired behavior.
+        #
+        # KNOWN LIMITATION (audited 2026-05-21): the reattach is unscoped.
+        # If the user opens the PWA in two browsers simultaneously, the
+        # second WS connect steals the first browser's streams too — frames
+        # are tab_id-stamped so nothing renders in the wrong chat, but the
+        # first browser goes silent until its socket reconnects. Acceptable
+        # for the iPhone-only PWA flow we ship today; revisit if the user
+        # routinely watches the bridge from two devices.
+        for _sess in sessions.sessions.values():
+            if _sess.current is None:
+                continue
+            _sink = _sess.current.sink
+            if isinstance(_sink, WebSink):
+                _sink.attach(outbound)
+        for _adhoc in sessions.adhoc_runs.values():
+            if isinstance(_adhoc.sink, WebSink):
+                _adhoc.sink.attach(outbound)
+
         # Keyed by a monotonic counter, not id(task) — id() can be recycled by
         # CPython after a task is collected, creating an aliasing race where
         # one task's done-callback removes a different task from the map.
@@ -4539,6 +4567,18 @@ async def _do_prompt(
     if force_session_id and not _SESSION_ID_RE.match(force_session_id):
         await outbound.put(msg("error", error="Invalid force_session_id"))
         return
+    # `client_session_id` is the session UUID the client believes this
+    # tab is currently in. Used as a FALLBACK resume hint when our
+    # in-memory `sess.session_id` is None (typically after a bridge
+    # restart wiped the tab→session map while the client's tab.sessionId
+    # survived in localStorage). Without this, the next prompt after a
+    # restart forks into a brand-new session and the conversation the
+    # user was reading silently splits in two. Same shape validation as
+    # force_session_id so a tampered frame can't smuggle weird strings
+    # into argv.
+    client_session_id = (frame.get("client_session_id") or "").strip() or None
+    if client_session_id and not _SESSION_ID_RE.match(client_session_id):
+        client_session_id = None  # silently ignore; not worth a hard error
     # Cross-project session-adoption guard. An authenticated client could
     # otherwise pass any session UUID and have `claude --resume` pull in a
     # conversation that belongs to a different project's cwd, leaking its
@@ -4677,6 +4717,26 @@ async def _do_prompt(
     if force_session_id:
         state.paused_sessions.discard((project, force_session_id))
 
+    # Bridge-restart resume recovery. If our in-memory tab record has no
+    # session_id but the client knows one (carried in localStorage), adopt
+    # it so claude.exe gets `--resume <id>` instead of forking a new
+    # conversation. Cross-project guard: only adopt when the session
+    # actually belongs to this project's cwd (mirrors the force_session_id
+    # check below this block).
+    adopt_client_sid = None
+    if (
+        client_session_id
+        and not force_session_id
+        and (sess_for_resume is None or not sess_for_resume.session_id)
+    ):
+        try:
+            match_dir = find_session_dir(cwd)
+            if match_dir is not None and (match_dir / f"{client_session_id}.jsonl").is_file():
+                adopt_client_sid = client_session_id
+                state.paused_sessions.discard((project, client_session_id))
+        except Exception:
+            log.exception("client_session_id existence check raised")
+
     # Fire-and-forget the run on this WS — if the user disconnects, the
     # run itself keeps going (subprocess survives) but the task that
     # pumps its output gets cancelled. Deliberate, so a phone going to
@@ -4690,7 +4750,10 @@ async def _do_prompt(
         permission_mode=mode,
         sink=sink,
         effort=effort,
-        force_session_id=force_session_id,
+        # adopt_client_sid only set when our in-memory session_id was
+        # lost; force_session_id wins when both are present (the user
+        # explicitly chose to resume that one from the history sheet).
+        force_session_id=force_session_id or adopt_client_sid,
         model_override=model_override,
         agent=agent_choice,
         no_session_persistence=is_compact,
@@ -4820,6 +4883,14 @@ async def _do_command(
             await outbound.put(msg("error", error=str(e)))
             return
         mode = (frame.get("permission_mode") or cfg.default_permission_mode).strip().lower()
+        # Mirror the whitelist `_do_prompt` enforces (line 4608). Without
+        # this, a tampered frame could push an arbitrary string to the
+        # spawned claude's `--permission-mode` flag and make claude.exe
+        # exit non-zero in an inconsistent way (no shell-injection risk
+        # — argv list, shell=False — but trivial to guard).
+        if mode not in {"ask", "auto", "plan", "edits"}:
+            await outbound.put(msg("error", error=f"Invalid permission_mode: {mode}"))
+            return
         effort_a = (frame.get("effort") or "high").strip().lower()
         if effort_a not in {"low", "medium", "high", "xhigh", "max"}:
             effort_a = "high"

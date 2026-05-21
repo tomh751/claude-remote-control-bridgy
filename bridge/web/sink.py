@@ -78,6 +78,20 @@ class WebSink:
         # five tabs in flight.
         self._last_text_buf: str = ""
 
+    def attach(self, outbound: "asyncio.Queue[dict[str, Any]]") -> None:
+        """Rebind this sink to a new outbound queue.
+
+        Called when the WS reconnects mid-run. Without this, the sink
+        keeps writing to the dropped connection's queue (whose sender
+        task was cancelled on disconnect), and lifecycle frames like
+        `run_finished` go to /dev/null — the client never learns the
+        run is over, so the composer's stop button stays stuck forever
+        even though Claude has long since finished. iPhone PWA
+        background→foreground cycles produce a ws.close+ws.open every
+        time, so this used to fire on most multi-minute runs.
+        """
+        self._out = outbound
+
     async def _put(self, frame: dict[str, Any]) -> None:
         # Stamp every frame with our tab_id so the client routes the event to
         # the right tab's chat. Without this, frames for tab A could render

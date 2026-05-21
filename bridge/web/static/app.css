@@ -4134,6 +4134,13 @@ body:has(.sheet:not([hidden])) .newMessagesPill {
   padding: calc(56px + var(--safe-top)) 0 calc(24px + var(--safe-bottom));
   box-sizing: border-box;
   animation: fadeIn 180ms var(--ease-out) both;
+  /* CRITICAL: the IMG inside also has `touch-action: none`, but iOS
+     Safari decides what to do with a 2-finger gesture based on the
+     element under EACH finger. If the user pinches with one finger
+     on the dark backdrop, that finger lands on .lightbox (not img);
+     without `none` here, iOS interprets the gesture as a page-pinch
+     and the JS pinch handler never sees `touches.length === 2`. */
+  touch-action: none;
 }
 .lightbox img {
   max-width: 100%;
